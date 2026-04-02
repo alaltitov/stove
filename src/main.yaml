@@ -29,7 +29,7 @@ esphome:
   name: ${display_name}
   project:
     name: "alaltitov.stove"
-    version: "2026.4.3"
+    version: "2026.4.0"
   on_boot:
     priority: -10
     then:
