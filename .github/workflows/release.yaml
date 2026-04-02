@@ -47,7 +47,6 @@ jobs:
 
           FACTORY_BIN="$(find . -type f -name 'firmware.factory.bin' | head -n 1)"
           OTA_BIN="$(find . -type f -name 'firmware.ota.bin' | head -n 1)"
-          APP_BIN="$(find . -type f -name 'firmware.bin' | head -n 1)"
 
           if [[ -z "${FACTORY_BIN}" ]]; then
             echo "firmware.factory.bin not found"
@@ -61,10 +60,6 @@ jobs:
 
           cp "${FACTORY_BIN}" "release-assets/${PROJECT_NAME}-${TAG}.factory.bin"
           cp "${OTA_BIN}" "release-assets/${PROJECT_NAME}-${TAG}.ota.bin"
-
-          if [[ -n "${APP_BIN}" ]]; then
-            cp "${APP_BIN}" "release-assets/${PROJECT_NAME}-${TAG}.bin"
-          fi
 
           ls -lah release-assets
 
