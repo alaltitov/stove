@@ -3,13 +3,13 @@ name: Build and Publish Firmware
 on:
   push:
     tags:
-      - 'v*' # Скрипт запустится автоматически при git push origin v...
+      - 'v*' # Запуск при git push origin v...
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Разрешение на создание ветки gh-pages
+      contents: write # Разрешение для Pages и добавления файлов в Релиз
 
     steps:
       - name: Checkout repository
@@ -24,32 +24,37 @@ jobs:
         run: pip install esphome
 
       - name: Compile ESPHome Firmware
-        # Убедитесь, что имя файла совпадает с вашим yaml
         run: esphome compile src/main.yaml
 
-      - name: Prepare Files for Pages
+      - name: Prepare Files for Pages and Release
         run: |
           mkdir public
-          # Берем имя тега напрямую из Git (например, v2026.4.0)
           VERSION="${{ github.ref_name }}"
-          BIN_NAME="stove-${VERSION}.bin"
+          OTA_BIN="stove-${VERSION}-ota.bin"
+          FACTORY_BIN="stove-${VERSION}-factory.bin"
           
-          # Копируем скомпилированную прошивку
-          cp .esphome/build/stove/.pioenvs/stove/firmware.bin public/$BIN_NAME
+          # Ищем и копируем оба файла
+          find .esphome/build/stove -name "firmware.ota.bin" -exec cp {} public/$OTA_BIN \;
+          find .esphome/build/stove -name "firmware.factory.bin" -exec cp {} public/$FACTORY_BIN \;
           
-          # Считаем MD5
-          MD5_HASH=$(md5sum public/$BIN_NAME | awk '{ print $1 }')
+          # Защита от ошибок: проверяем, что файлы реально скопировались
+          if [ ! -f "public/$OTA_BIN" ]; then echo "Ошибка: OTA файл не найден!"; exit 1; fi
+          if [ ! -f "public/$FACTORY_BIN" ]; then echo "Ошибка: Factory файл не найден!"; exit 1; fi
           
-          # Создаем manifest.json для вашего устройства
+          # Считаем MD5 ИМЕННО для OTA-файла (его качает печь)
+          MD5_HASH=$(md5sum public/$OTA_BIN | awk '{ print $1 }')
+          
+          # Создаем manifest.json (для вашей печи)
           cat <<EOF > public/manifest.json
           {
             "version": "$VERSION",
-            "ota_url": "https://alaltitov.github.io/stove/$BIN_NAME",
+            "ota_url": "https://alaltitov.github.io/stove/$OTA_BIN",
             "md5": "$MD5_HASH"
           }
           EOF
           
-          # Создаем esphome-manifest.json
+          # Создаем esphome-manifest.json (для Web Install)
+          # Важно: factory.bin всегда шьется с offset 0
           cat <<EOF > public/esphome-manifest.json
           {
             "name": "alaltitov.stove",
@@ -58,16 +63,24 @@ jobs:
               {
                 "chipFamily": "ESP32-S3",
                 "parts": [
-                  { "path": "https://alaltitov.github.io/stove/$BIN_NAME", "offset": 65536 }
+                  { "path": "https://alaltitov.github.io/stove/$FACTORY_BIN", "offset": 0 }
                 ]
               }
             ]
           }
           EOF
 
+      - name: Upload Binaries to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            public/stove-*-ota.bin
+            public/stove-*-factory.bin
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
-          force_orphan: true # Очищает старые файлы, оставляя только актуальную прошивку
+          force_orphan: true
+
