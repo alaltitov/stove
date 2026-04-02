@@ -25,7 +25,7 @@ jobs:
 
       - name: Compile ESPHome Firmware
         # Убедитесь, что имя файла совпадает с вашим yaml
-        run: esphome compile main.yaml
+        run: esphome compile src/main.yaml
 
       - name: Prepare Files for Pages
         run: |
