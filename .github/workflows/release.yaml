@@ -1,19 +1,15 @@
-name: Build and Release Firmware
+name: Build and Publish Firmware
 
 on:
   push:
     tags:
-      - "v*"
-
-permissions:
-  contents: write
+      - 'v*' # Скрипт запустится автоматически при git push origin v...
 
 jobs:
-  build-release:
+  build:
     runs-on: ubuntu-latest
-
-    env:
-      PROJECT_NAME: guition-stove
+    permissions:
+      contents: write # Разрешение на создание ветки gh-pages
 
     steps:
       - name: Checkout repository
@@ -22,50 +18,56 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
       - name: Install ESPHome
+        run: pip install esphome
+
+      - name: Compile ESPHome Firmware
+        # Убедитесь, что имя файла совпадает с вашим yaml
+        run: esphome compile stove.yaml
+
+      - name: Prepare Files for Pages
         run: |
-          python -m pip install --upgrade pip
-          pip install esphome==2026.3.1
+          mkdir public
+          # Берем имя тега напрямую из Git (например, v2026.4.0)
+          VERSION="${{ github.ref_name }}"
+          BIN_NAME="stove-${VERSION}.bin"
+          
+          # Копируем скомпилированную прошивку
+          cp .esphome/build/stove/.pioenvs/stove/firmware.bin public/$BIN_NAME
+          
+          # Считаем MD5
+          MD5_HASH=$(md5sum public/$BIN_NAME | awk '{ print $1 }')
+          
+          # Создаем manifest.json для вашего устройства
+          cat <<EOF > public/manifest.json
+          {
+            "version": "$VERSION",
+            "ota_url": "https://alaltitov.github.io/stove/$BIN_NAME",
+            "md5": "$MD5_HASH"
+          }
+          EOF
+          
+          # Создаем esphome-manifest.json
+          cat <<EOF > public/esphome-manifest.json
+          {
+            "name": "alaltitov.stove",
+            "version": "$VERSION",
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "https://alaltitov.github.io/stove/$BIN_NAME", "offset": 65536 }
+                ]
+              }
+            ]
+          }
+          EOF
 
-      - name: Compile firmware
-        run: |
-          esphome compile src/main.yaml
-
-      - name: Show generated files
-        run: |
-          find . -type f \( -name "*.bin" -o -name "*.elf" \) | sort
-
-      - name: Prepare release assets
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG="${GITHUB_REF_NAME}"
-          mkdir -p release-assets
-
-          FACTORY_BIN="$(find . -type f -name 'firmware.factory.bin' | head -n 1)"
-          OTA_BIN="$(find . -type f -name 'firmware.ota.bin' | head -n 1)"
-
-          if [[ -z "${FACTORY_BIN}" ]]; then
-            echo "firmware.factory.bin not found"
-            exit 1
-          fi
-
-          if [[ -z "${OTA_BIN}" ]]; then
-            echo "firmware.ota.bin not found"
-            exit 1
-          fi
-
-          cp "${FACTORY_BIN}" "release-assets/${PROJECT_NAME}-${TAG}.factory.bin"
-          cp "${OTA_BIN}" "release-assets/${PROJECT_NAME}-${TAG}.ota.bin"
-
-          ls -lah release-assets
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          generate_release_notes: true
-          files: |
-            release-assets/*.bin
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          force_orphan: true # Очищает старые файлы, оставляя только актуальную прошивку
