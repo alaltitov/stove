@@ -34,8 +34,8 @@ jobs:
           FACTORY_BIN="stove-${VERSION}-factory.bin"
           
           # Ищем и копируем оба файла
-          find .esphome/build/stove -name "firmware.ota.bin" -exec cp {} public/$OTA_BIN \;
-          find .esphome/build/stove -name "firmware.factory.bin" -exec cp {} public/$FACTORY_BIN \;
+          find src/.esphome/build/stove -name "firmware.ota.bin" -exec cp {} public/$OTA_BIN \;
+          find src/.esphome/build/stove -name "firmware.factory.bin" -exec cp {} public/$FACTORY_BIN \;
           
           # Защита от ошибок: проверяем, что файлы реально скопировались
           if [ ! -f "public/$OTA_BIN" ]; then echo "Ошибка: OTA файл не найден!"; exit 1; fi
