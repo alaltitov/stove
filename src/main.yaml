@@ -1,6 +1,6 @@
 substitutions:
   display_name: "stove"
-  stove_version: "2026.4.2"
+  stove_version: "2026.4.3"
   stove_name: "Печь"
   stove_temp_sensor_id: max6675_temp
 
@@ -548,6 +548,7 @@ switch:
     id: stove_heat_relay
     name: "Stove Heat Relay"
     pin: GPIO40
+    inverted: true
     restore_mode: ALWAYS_OFF
     on_turn_on:
       - lambda: |-
@@ -562,6 +563,7 @@ switch:
     id: stove_alarm_relay
     name: "Stove Alarm Relay"
     pin: GPIO1
+    inverted: true
     restore_mode: ALWAYS_OFF
     on_turn_on:
       - lambda: |-
@@ -1795,7 +1797,7 @@ lvgl:
                         arc_color: color_black
                         arc_opa: 35%
                         indicator:
-                          arc_color: color_secondary
+                          arc_color: color_orange
                           arc_width: 14
                         knob:
                           bg_opa: transp
@@ -2856,6 +2858,7 @@ script:
 
           lv_obj_set_style_arc_color(id(stove_arc_main_current), c, LV_PART_INDICATOR);
           lv_obj_set_style_arc_color(id(stove_arc_target_edit), c, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(stove_arc_main_timer), c, LV_PART_INDICATOR);
           lv_obj_set_style_border_color(id(stove_arc_target_edit), c, LV_PART_KNOB);
           lv_obj_set_style_bg_color(id(ota_bar_value), c, LV_PART_INDICATOR);
           lv_obj_set_style_bg_color(id(boot_progress_bar), c, LV_PART_INDICATOR);
@@ -2896,6 +2899,7 @@ script:
 
           lv_obj_set_style_arc_color(id(stove_arc_main_current), c, LV_PART_INDICATOR);
           lv_obj_set_style_arc_color(id(stove_arc_target_edit), c, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(stove_arc_main_timer), c, LV_PART_INDICATOR);
           lv_obj_set_style_border_color(id(stove_arc_target_edit), c, LV_PART_KNOB);
           lv_obj_set_style_bg_color(id(ota_bar_value), c, LV_PART_INDICATOR);
           lv_obj_set_style_bg_color(id(boot_progress_bar), c, LV_PART_INDICATOR);
