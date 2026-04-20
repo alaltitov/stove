@@ -36,8 +36,8 @@ jobs:
           mkdir -p public
           VERSION="${{ github.ref_name }}"
 
-          DEVICE1="3248W535"
-          DEVICE2="4848S040"
+          DEVICE1="3248w535"
+          DEVICE2="4848s040"
 
           NAME1="stove3248w535"
           NAME2="stove4848s040"
@@ -66,7 +66,7 @@ jobs:
           MD5_1=$(md5sum "public/$OTA1_BIN" | awk '{ print $1 }')
           MD5_2=$(md5sum "public/$OTA2_BIN" | awk '{ print $1 }')
 
-          cat <<EOF > public/manifest_3248W535.json
+          cat <<EOF > public/manifest_3248w535.json
           {
             "version": "$VERSION",
             "ota_url": "https://alaltitov.github.io/stove/$OTA1_BIN",
@@ -74,7 +74,7 @@ jobs:
           }
           EOF
 
-          cat <<EOF > public/manifest_4848S040.json
+          cat <<EOF > public/manifest_4848s040.json
           {
             "version": "$VERSION",
             "ota_url": "https://alaltitov.github.io/stove/$OTA2_BIN",
@@ -82,9 +82,9 @@ jobs:
           }
           EOF
 
-          cat <<EOF > public/esphome-manifest-3248W535.json
+          cat <<EOF > public/esphome-manifest-3248w535.json
           {
-            "name": "alaltitov.stove.3248W535",
+            "name": "alaltitov.stove.3248w535",
             "version": "$VERSION",
             "builds": [
               {
@@ -97,9 +97,9 @@ jobs:
           }
           EOF
 
-          cat <<EOF > public/esphome-manifest-4848S040.json
+          cat <<EOF > public/esphome-manifest-4848s040.json
           {
-            "name": "alaltitov.stove.4848S040",
+            "name": "alaltitov.stove.4848s040",
             "version": "$VERSION",
             "builds": [
               {
