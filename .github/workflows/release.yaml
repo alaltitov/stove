@@ -3,13 +3,13 @@ name: Build and Publish Firmware
 on:
   push:
     tags:
-      - 'v*' # Запуск при git push origin v...
+      - 'v*'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Разрешение для Pages и добавления файлов в Релиз
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -23,47 +23,89 @@ jobs:
       - name: Install ESPHome
         run: pip install esphome
 
-      - name: Compile ESPHome Firmware
-        run: esphome compile src/main.yaml
+      - name: Compile ESPHome Firmware for 3248W535
+        run: esphome compile src/main_3248W535.yaml
+
+      - name: Compile ESPHome Firmware for 4848S040
+        run: esphome compile src/main_4848S040.yaml
 
       - name: Prepare Files for Pages and Release
         run: |
-          mkdir public
+          set -e
+
+          mkdir -p public
           VERSION="${{ github.ref_name }}"
-          OTA_BIN="stove-${VERSION}-ota.bin"
-          FACTORY_BIN="stove-${VERSION}-factory.bin"
-          
-          # Ищем и копируем оба файла
-          find src/.esphome/build/stove -name "firmware.ota.bin" -exec cp {} public/$OTA_BIN \;
-          find src/.esphome/build/stove -name "firmware.factory.bin" -exec cp {} public/$FACTORY_BIN \;
-          
-          # Защита от ошибок: проверяем, что файлы реально скопировались
-          if [ ! -f "public/$OTA_BIN" ]; then echo "Ошибка: OTA файл не найден!"; exit 1; fi
-          if [ ! -f "public/$FACTORY_BIN" ]; then echo "Ошибка: Factory файл не найден!"; exit 1; fi
-          
-          # Считаем MD5 ИМЕННО для OTA-файла (его качает печь)
-          MD5_HASH=$(md5sum public/$OTA_BIN | awk '{ print $1 }')
-          
-          # Создаем manifest.json (для вашей печи)
-          cat <<EOF > public/manifest.json
+
+          DEVICE1="3248W535"
+          DEVICE2="4848S040"
+
+          NAME1="stove3248W535"
+          NAME2="stove4848S040"
+
+          OTA1_BIN="stove-${DEVICE1}-${VERSION}-ota.bin"
+          FACTORY1_BIN="stove-${DEVICE1}-${VERSION}-factory.bin"
+
+          OTA2_BIN="stove-${DEVICE2}-${VERSION}-ota.bin"
+          FACTORY2_BIN="stove-${DEVICE2}-${VERSION}-factory.bin"
+
+          BUILD1_DIR="src/.esphome/build/${NAME1}"
+          BUILD2_DIR="src/.esphome/build/${NAME2}"
+
+          find "$BUILD1_DIR" -name "firmware.ota.bin" -exec cp {} "public/$OTA1_BIN" \;
+          find "$BUILD1_DIR" -name "firmware.factory.bin" -exec cp {} "public/$FACTORY1_BIN" \;
+
+          find "$BUILD2_DIR" -name "firmware.ota.bin" -exec cp {} "public/$OTA2_BIN" \;
+          find "$BUILD2_DIR" -name "firmware.factory.bin" -exec cp {} "public/$FACTORY2_BIN" \;
+
+          if [ ! -f "public/$OTA1_BIN" ]; then echo "Ошибка: OTA файл для $DEVICE1 не найден!"; exit 1; fi
+          if [ ! -f "public/$FACTORY1_BIN" ]; then echo "Ошибка: Factory файл для $DEVICE1 не найден!"; exit 1; fi
+
+          if [ ! -f "public/$OTA2_BIN" ]; then echo "Ошибка: OTA файл для $DEVICE2 не найден!"; exit 1; fi
+          if [ ! -f "public/$FACTORY2_BIN" ]; then echo "Ошибка: Factory файл для $DEVICE2 не найден!"; exit 1; fi
+
+          MD5_1=$(md5sum "public/$OTA1_BIN" | awk '{ print $1 }')
+          MD5_2=$(md5sum "public/$OTA2_BIN" | awk '{ print $1 }')
+
+          cat <<EOF > public/manifest_3248W535.json
           {
             "version": "$VERSION",
-            "ota_url": "https://alaltitov.github.io/stove/$OTA_BIN",
-            "md5": "$MD5_HASH"
+            "ota_url": "https://alaltitov.github.io/stove/$OTA1_BIN",
+            "md5": "$MD5_1"
           }
           EOF
-          
-          # Создаем esphome-manifest.json (для Web Install)
-          # Важно: factory.bin всегда шьется с offset 0
-          cat <<EOF > public/esphome-manifest.json
+
+          cat <<EOF > public/manifest_4848S040.json
           {
-            "name": "alaltitov.stove",
+            "version": "$VERSION",
+            "ota_url": "https://alaltitov.github.io/stove/$OTA2_BIN",
+            "md5": "$MD5_2"
+          }
+          EOF
+
+          cat <<EOF > public/esphome-manifest-3248W535.json
+          {
+            "name": "alaltitov.stove.3248W535",
             "version": "$VERSION",
             "builds": [
               {
                 "chipFamily": "ESP32-S3",
                 "parts": [
-                  { "path": "https://alaltitov.github.io/stove/$FACTORY_BIN", "offset": 0 }
+                  { "path": "https://alaltitov.github.io/stove/$FACTORY1_BIN", "offset": 0 }
+                ]
+              }
+            ]
+          }
+          EOF
+
+          cat <<EOF > public/esphome-manifest-4848S040.json
+          {
+            "name": "alaltitov.stove.4848S040",
+            "version": "$VERSION",
+            "builds": [
+              {
+                "chipFamily": "ESP32-S3",
+                "parts": [
+                  { "path": "https://alaltitov.github.io/stove/$FACTORY2_BIN", "offset": 0 }
                 ]
               }
             ]
@@ -74,8 +116,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            public/stove-*-ota.bin
-            public/stove-*-factory.bin
+            public/*.bin
+            public/manifest_*.json
+            public/esphome-manifest-*.json
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
@@ -83,4 +126,3 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           force_orphan: true
-

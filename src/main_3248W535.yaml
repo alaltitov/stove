@@ -1,0 +1,3027 @@
+substitutions:
+  display_name: "stove3248W535"
+  stove_version: "2026.4.0"
+  stove_name: "Печь"
+  stove_temp_sensor_id: max6675_temp
+
+  stove_min_temp: "5"
+  stove_max_temp: "230"
+  stove_temp_step: "1"
+  stove_default_temp: "35"
+
+  stove_hysteresis_min: "1"
+  stove_hysteresis_max: "30"
+  stove_default_hysteresis: "3"
+
+  stove_reach_stable_seconds: "5"
+
+  update_info_url: "https://alaltitov.github.io/stove/manifest_3248W535.json"
+
+  plus_icon: "\U000F0415"
+  minus_icon: "\U000F0374"
+  settings_icon: "\U000F08BB"
+  alarm_icon: "\U000F009E"
+  wifi_icon: "\U000F05A9"
+  back_icon: "\U000F0156"
+  heat_icon: "\U000F0238"
+  check_icon: "\U000F012C"
+
+esphome:
+  name: ${display_name}
+  project:
+    name: "alaltitov.stove"
+    version: "${stove_version}"
+  on_boot:
+    priority: -10
+    then:
+      - lambda: |-
+          ESP_LOGI("stove_boot", "Boot: forcing relays OFF and resetting stove state");
+      - switch.turn_off: stove_heat_relay
+      - switch.turn_off: stove_alarm_relay
+      - climate.control:
+          id: stove_thermostat
+          mode: "OFF"
+          target_temperature: ${stove_default_temp}
+      - script.execute: stove_reset_all
+      - script.execute: stove_update_arc_range
+      - script.execute: stove_refresh_wifi_info
+      - script.execute: stove_apply_theme
+      - lambda: |-
+          id(stove_update_available_cached) = false;
+          id(stove_update_latest_version).clear();
+          id(stove_update_info_ok) = false;
+          id(stove_update_md5).clear();
+          id(stove_update_ota_url).clear();
+      - lvgl.bar.update:
+          id: boot_progress_bar
+          value: 0
+      - lvgl.widget.show: boot_overlay
+      - lvgl.widget.show: boot_widget
+      - lambda: |-
+          lv_obj_clear_flag(id(boot_overlay), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_clear_flag(id(boot_widget), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_move_foreground(id(boot_overlay));
+          lv_obj_move_foreground(id(boot_widget));
+      - delay: 1s
+      - lvgl.bar.update:
+          id: boot_progress_bar
+          value: 25
+      - delay: 1s
+      - lvgl.bar.update:
+          id: boot_progress_bar
+          value: 50
+      - delay: 1s
+      - lvgl.bar.update:
+          id: boot_progress_bar
+          value: 75
+      - delay: 1s
+      - lvgl.bar.update:
+          id: boot_progress_bar
+          value: 100
+      - delay: 200ms
+      - lvgl.widget.hide: boot_widget
+      - lvgl.widget.hide: boot_overlay
+      - script.execute: stove_ui_refresh_all
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+    advanced:
+      execute_from_psram: true
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+api:
+  reboot_timeout: 0s
+
+logger:
+  level: info
+
+http_request:
+  verify_ssl: true
+  timeout: 10s
+  buffer_size_rx: 1024
+
+ota:
+  - platform: esphome
+    id: ota_state
+    on_begin: &ota_begin
+      - logger.log: "OTA Start"
+      - lvgl.resume:
+      - lvgl.label.update:
+          id: ota_label_primary
+          text: "Идет обновление"
+      - lvgl.label.update:
+          id: ota_label_secondary
+          text: "Подготовка прошивки..."
+      - lvgl.label.update:
+          id: ota_percent_label
+          text: "0%"
+      - lvgl.label.update:
+          id: ota_bottom_hint
+          text: "Не выключайте питание"
+      - lvgl.bar.update:
+          id: ota_bar_value
+          value: 0
+      - lvgl.widget.show: ota_overlay
+      - lvgl.widget.show: ota_widget
+      - lambda: |-
+          lv_obj_clear_flag(id(ota_overlay), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_clear_flag(id(ota_widget), LV_OBJ_FLAG_HIDDEN);
+          lv_obj_move_foreground(id(ota_overlay));
+          lv_obj_move_foreground(id(ota_widget));
+          lv_refr_now(NULL);
+      - logger.log: "OTA widget shown"
+
+    on_progress: &ota_progress
+      - lvgl.bar.update:
+          id: ota_bar_value
+          value: !lambda return (int)x;
+      - lvgl.label.update:
+          id: ota_label_primary
+          text: "Идет обновление"
+      - lvgl.label.update:
+          id: ota_label_secondary
+          text: "Загрузка прошивки"
+      - lvgl.label.update:
+          id: ota_percent_label
+          text: !lambda |-
+            static char buffer[16];
+            snprintf(buffer, sizeof(buffer), "%d%%", (int)x);
+            return buffer;
+      - lambda: |-
+          lv_refr_now(NULL);
+
+    on_end: &ota_end
+      - logger.log: "OTA End"
+      - lvgl.bar.update:
+          id: ota_bar_value
+          value: 100
+      - lvgl.label.update:
+          id: ota_label_primary
+          text: "Обновление завершено"
+      - lvgl.label.update:
+          id: ota_label_secondary
+          text: "Устройство перезагрузится"
+      - lvgl.label.update:
+          id: ota_percent_label
+          text: "100%"
+      - lvgl.label.update:
+          id: ota_bottom_hint
+          text: "Почти готово"
+      - lambda: |-
+          lv_refr_now(NULL);
+
+    on_error: &ota_error
+      - logger.log:
+          format: "OTA update error %d"
+          args: ["x"]
+      - lvgl.label.update:
+          id: ota_label_primary
+          text: "Ошибка обновления"
+      - lvgl.label.update:
+          id: ota_label_secondary
+          text: "Не удалось загрузить прошивку"
+      - lvgl.label.update:
+          id: ota_bottom_hint
+          text: !lambda |-
+            static char buffer[64];
+            snprintf(buffer, sizeof(buffer), "Код ошибки: %d", x);
+            return buffer;
+      - lambda: |-
+          lv_refr_now(NULL);
+
+  - platform: http_request
+    id: ota_http_request
+    on_begin: *ota_begin
+    on_progress: *ota_progress
+    on_end: *ota_end
+    on_error: *ota_error
+
+wifi:
+  ap:
+    ssid: "Stove-Hotspot"
+    password: "01234567"
+  on_connect:
+    then:
+      - lambda: |-
+          id(stove_wifi_connected) = true;
+      - script.execute: stove_refresh_wifi_info
+      - script.execute: stove_ui_update_wifi_icon
+      - script.execute: stove_update_wifi_modal
+  on_disconnect:
+    then:
+      - lambda: |-
+          id(stove_wifi_connected) = false;
+      - script.execute: stove_refresh_wifi_info
+      - script.execute: stove_ui_update_wifi_icon
+      - script.execute: stove_update_wifi_modal
+
+captive_portal:
+
+web_server:
+  port: 80
+
+color:
+  - id: color_primary
+    hex: 343645
+  - id: color_secondary
+    hex: 606682
+  - id: color_text
+    hex: 9BA2BC
+  - id: color_black
+    hex: 0d0d0d
+  - id: color_white
+    hex: f2f0eb
+  - id: color_red
+    hex: ff0000
+  - id: color_blue
+    hex: 4C9FFF
+  - id: color_yellow
+    hex: e7c12c
+  - id: color_green
+    hex: 5CA848
+  - id: color_orange
+    hex: ff6600
+
+font:
+  - file: "assets/fonts/Nunito-SemiBold.ttf"
+    id: nunito_20
+    size: 20
+    bpp: 4
+    glyphsets:
+      - GF_Cyrillic_Core
+
+  - file: "assets/fonts/Nunito-SemiBold.ttf"
+    id: nunito_26
+    size: 26
+    bpp: 4
+    glyphsets:
+      - GF_Cyrillic_Core
+
+  - file: "assets/fonts/Nunito-SemiBold.ttf"
+    id: nunito_30
+    size: 30
+    bpp: 4
+    glyphsets:
+      - GF_Cyrillic_Core
+
+  - file: "assets/fonts/Nunito-SemiBold.ttf"
+    id: nunito_36
+    size: 36
+    bpp: 4
+    glyphsets:
+      - GF_Cyrillic_Core
+
+  - file: "assets/fonts/Nunito-SemiBold.ttf"
+    id: nunito_42
+    size: 42
+    bpp: 4
+    glyphs: [ 0123456789° ]
+
+  - file: "assets/fonts/materialdesignicons-webfont.ttf"
+    id: mdi_icons_28
+    size: 28
+    bpp: 4
+    glyphs:
+      - "\U000F05A9"
+      - "\U000F0156"
+      - "\U000F08BB"
+      - "\U000F012C"
+
+  - file: "assets/fonts/materialdesignicons-webfont.ttf"
+    id: mdi_icons_40
+    size: 40
+    bpp: 4
+    glyphs:
+      - "\U000F0415"
+      - "\U000F0374"
+      - "\U000F0238"
+      - "\U000F012C"
+
+  - file: "assets/fonts/materialdesignicons-webfont.ttf"
+    id: mdi_icons_120
+    size: 120
+    bpp: 4
+    glyphs:
+      - "\U000F009E"
+
+  - file: "assets/fonts/materialdesignicons-webfont.ttf"
+    id: mdi_icons_100
+    size: 100
+    bpp: 4
+    glyphs:
+      - "\U000F009E"
+
+i2c:
+  - id: bus_a
+    sda: GPIO4
+    scl: GPIO8
+    frequency: 400kHz
+
+spi:
+  - id: display_qspi
+    type: quad
+    clk_pin: GPIO47
+    data_pins: [GPIO21, GPIO48, GPIO40, GPIO39]
+
+  - id: thermo_spi
+    clk_pin: GPIO5
+    miso_pin: GPIO7
+
+power_supply:
+  - id: backlight_id
+    pin: GPIO1
+    enable_on_boot: true
+
+display:
+  - platform: mipi_spi
+    id: ${display_name}
+    model: JC3248W535
+    rotation: 270
+    data_rate: 40MHz
+    cs_pin:
+      number: GPIO45
+      ignore_strapping_warning: true
+
+touchscreen:
+  - platform: axs15231
+    id: touchscreen_id
+    i2c_id: bus_a
+    display: ${display_name}
+    transform:
+      swap_xy: true
+      mirror_x: true
+    on_touch:
+      - lambda: |-
+            ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
+                touch.x,
+                touch.y,
+                touch.x_raw,
+                touch.y_raw
+                );
+
+globals:
+  - id: stove_arc_range_initialized
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_ui_user_adjusting_target
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_target_temp
+    type: int
+    restore_value: yes
+    initial_value: "${stove_default_temp}"
+
+  - id: stove_target_temp_edit
+    type: int
+    restore_value: no
+    initial_value: "${stove_default_temp}"
+
+  - id: stove_hysteresis
+    type: int
+    restore_value: yes
+    initial_value: "${stove_default_hysteresis}"
+
+  - id: stove_hysteresis_edit
+    type: int
+    restore_value: no
+    initial_value: "${stove_default_hysteresis}"
+
+  - id: stove_timer_hours
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+  - id: stove_timer_minutes
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+  - id: stove_remaining_sec
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: stove_cycle_running
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_hold_started
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_cycle_finished
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_heating_output_state
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_alarm_output_state
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_settings_open
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_cycle_modal_open
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_alarm_blink_state
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_timer_invalid
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_target_reached_latch_sec
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: stove_wifi_connected
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_theme_index
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+  - id: stove_theme_index_edit
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: stove_theme_color_hex
+    type: int
+    restore_value: no
+    initial_value: "0xFF6600"
+
+  - id: stove_update_info_ok
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_update_md5
+    type: std::string
+    restore_value: no
+    initial_value: "\"\""
+
+  - id: stove_update_ota_url
+    type: std::string
+    restore_value: no
+    initial_value: "\"\""
+
+  - id: stove_update_available_cached
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: stove_update_latest_version
+    type: std::string
+    restore_value: no
+    initial_value: "\"\""
+
+text_sensor:
+  - platform: template
+    id: stove_status_text
+    name: "Stove Status"
+    lambda: |-
+      if (id(stove_timer_invalid)) return {"Задайте таймер"};
+      if (id(stove_cycle_finished)) return {"Цикл окончен"};
+      if (id(stove_cycle_running) && id(stove_hold_started)) return {"Выдержка"};
+      if (id(stove_cycle_running) && id(stove_target_reached_latch_sec) > 0) return {"Стабилизация"};
+      if (id(stove_cycle_running)) return {"Нагрев"};
+      return {"Ожидание"};
+
+  - platform: template
+    id: stove_wifi_ip_text
+    name: "Stove WiFi IP"
+
+switch:
+  - platform: gpio
+    id: stove_heat_relay
+    name: "Stove Heat Relay"
+    pin: GPIO15
+    inverted: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - lambda: |-
+          ESP_LOGI("stove_relay", "HEAT relay -> ON (GPIO15)");
+      - script.execute: stove_ui_update_heat_indicator
+    on_turn_off:
+      - lambda: |-
+          ESP_LOGI("stove_relay", "HEAT relay -> OFF (GPIO15)");
+      - script.execute: stove_ui_update_heat_indicator
+
+  - platform: gpio
+    id: stove_alarm_relay
+    name: "Stove Alarm Relay"
+    pin: GPIO16
+    inverted: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - lambda: |-
+          ESP_LOGI("stove_relay", "ALARM relay -> ON (GPIO016)");
+    on_turn_off:
+      - lambda: |-
+          ESP_LOGI("stove_relay", "ALARM relay -> OFF (GPIO16)");
+
+button:
+  - platform: template
+    id: stove_theme_orange_button
+    on_press:
+      - lambda: |-
+          id(stove_theme_index_edit) = 0;
+      - script.execute: stove_apply_theme_preview
+
+  - platform: template
+    id: stove_theme_yellow_button
+    on_press:
+      - lambda: |-
+          id(stove_theme_index_edit) = 1;
+      - script.execute: stove_apply_theme_preview
+
+  - platform: template
+    id: stove_theme_red_button
+    on_press:
+      - lambda: |-
+          id(stove_theme_index_edit) = 2;
+      - script.execute: stove_apply_theme_preview
+
+  - platform: template
+    id: stove_theme_blue_button
+    on_press:
+      - lambda: |-
+          id(stove_theme_index_edit) = 3;
+      - script.execute: stove_apply_theme_preview
+
+  - platform: template
+    id: stove_theme_green_button
+    on_press:
+      - lambda: |-
+          id(stove_theme_index_edit) = 4;
+      - script.execute: stove_apply_theme_preview
+
+sensor:
+  - platform: max6675
+    id: max6675_temp
+    name: "Температура термопары"
+    spi_id: thermo_spi
+    cs_pin: GPIO6
+    update_interval: 1s
+    on_value:
+      - lambda: |-
+          ESP_LOGD("stove_temp", "MAX6675 temperature updated: %.2f", x);
+      - script.execute: stove_ui_update_current_temp
+
+  - platform: template
+    id: stove_remaining_minutes_sensor
+    name: "Stove Remaining Minutes"
+    unit_of_measurement: "min"
+    accuracy_decimals: 1
+    lambda: |-
+      return id(stove_remaining_sec) / 60.0f;
+
+  - platform: wifi_signal
+    id: stove_wifi_signal
+    name: "Stove WiFi Signal"
+    update_interval: 30s
+    on_value:
+      - script.execute: stove_refresh_wifi_info
+      - script.execute: stove_ui_update_wifi_icon
+      - script.execute: stove_update_wifi_modal
+
+climate:
+  - platform: thermostat
+    id: stove_thermostat
+    name: "${stove_name}"
+    sensor: ${stove_temp_sensor_id}
+
+    min_heating_off_time: 1s
+    min_heating_run_time: 1s
+    min_idle_time: 1s
+
+    visual:
+      min_temperature: ${stove_min_temp}
+      max_temperature: ${stove_max_temp}
+      temperature_step: ${stove_temp_step}
+
+    startup_delay: true
+    heat_deadband: 0.5
+    heat_overrun: 0.5
+
+    heat_action:
+      - lambda: |-
+          ESP_LOGI("stove_climate", "Thermostat heat_action fired");
+
+    idle_action:
+      - lambda: |-
+          ESP_LOGI("stove_climate", "Thermostat idle_action fired");
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          bool prev_heat = id(stove_heating_output_state);
+          bool prev_alarm = id(stove_alarm_output_state);
+          bool prev_hold_started = id(stove_hold_started);
+          bool prev_cycle_running = id(stove_cycle_running);
+          bool prev_cycle_finished = id(stove_cycle_finished);
+          int prev_remaining = id(stove_remaining_sec);
+
+          if (!id(stove_cycle_running)) {
+            id(stove_target_reached_latch_sec) = 0;
+            id(stove_heating_output_state) = false;
+          } else if (!id(${stove_temp_sensor_id}).has_state()) {
+            id(stove_target_reached_latch_sec) = 0;
+            id(stove_heating_output_state) = false;
+          } else {
+            float current = id(${stove_temp_sensor_id}).state;
+            float target = id(stove_target_temp);
+            float h = id(stove_hysteresis);
+
+            if (!id(stove_hold_started)) {
+              if (current >= target) {
+                id(stove_target_reached_latch_sec)++;
+              } else {
+                id(stove_target_reached_latch_sec) = 0;
+              }
+
+              if (id(stove_target_reached_latch_sec) >= ${stove_reach_stable_seconds}) {
+                id(stove_hold_started) = true;
+                id(stove_remaining_sec) = (id(stove_timer_hours) * 3600) + (id(stove_timer_minutes) * 60);
+                id(stove_target_reached_latch_sec) = 0;
+                ESP_LOGI("stove_cycle", "Hold started: timer=%d sec", id(stove_remaining_sec));
+              }
+            }
+
+            if (!id(stove_cycle_finished)) {
+              float low_border = target - h;
+              float high_border = target + h;
+
+              if (current <= low_border) {
+                if (!id(stove_heating_output_state)) {
+                  ESP_LOGI("stove_logic",
+                           "Heating request ON: current=%.2f target=%.2f low=%.2f high=%.2f",
+                           current, target, low_border, high_border);
+                }
+                id(stove_heating_output_state) = true;
+              } else if (current >= high_border) {
+                if (id(stove_heating_output_state)) {
+                  ESP_LOGI("stove_logic",
+                           "Heating request OFF: current=%.2f target=%.2f low=%.2f high=%.2f",
+                           current, target, low_border, high_border);
+                }
+                id(stove_heating_output_state) = false;
+              }
+            }
+
+            if (id(stove_hold_started) && id(stove_remaining_sec) > 0) {
+              id(stove_remaining_sec)--;
+            }
+
+            if (id(stove_hold_started) && id(stove_remaining_sec) <= 0) {
+              id(stove_remaining_sec) = 0;
+              id(stove_cycle_running) = false;
+              id(stove_hold_started) = false;
+              id(stove_cycle_finished) = true;
+              id(stove_heating_output_state) = false;
+              id(stove_alarm_output_state) = true;
+              ESP_LOGI("stove_cycle", "Cycle finished -> heating OFF, alarm ON");
+            }
+          }
+
+          if (prev_heat != id(stove_heating_output_state)) {
+            if (id(stove_heating_output_state)) {
+              id(stove_heat_relay).turn_on();
+            } else {
+              id(stove_heat_relay).turn_off();
+            }
+          }
+
+          if (prev_alarm != id(stove_alarm_output_state)) {
+            if (id(stove_alarm_output_state)) {
+              id(stove_alarm_relay).turn_on();
+            } else {
+              id(stove_alarm_relay).turn_off();
+            }
+          }
+
+          if (prev_remaining != id(stove_remaining_sec) ||
+              prev_hold_started != id(stove_hold_started) ||
+              prev_cycle_finished != id(stove_cycle_finished) ||
+              prev_cycle_running != id(stove_cycle_running)) {
+            id(stove_remaining_minutes_sensor).publish_state(id(stove_remaining_sec) / 60.0f);
+          }
+      - script.execute: stove_ui_update_timer
+      - script.execute: stove_ui_update_status
+      - script.execute: stove_ui_update_start_stop
+      - if:
+          condition:
+            lambda: 'return id(stove_cycle_finished) && !id(stove_cycle_modal_open);'
+          then:
+            - script.execute: stove_ui_show_cycle_finished_modal
+
+  - interval: 500ms
+    then:
+      - if:
+          condition:
+            lambda: 'return id(stove_cycle_finished) && id(stove_cycle_modal_open);'
+          then:
+            - lambda: |-
+                id(stove_alarm_blink_state) = !id(stove_alarm_blink_state);
+            - script.execute: stove_ui_update_alarm_blink
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(stove_alarm_blink_state);'
+                then:
+                  - lambda: |-
+                      id(stove_alarm_blink_state) = false;
+                  - script.execute: stove_ui_update_alarm_blink
+
+lvgl:
+  id: lvgl_component
+  color_depth: 16
+  byte_order: big_endian
+  displays: ${display_name}
+  touchscreens:
+    - touchscreen_id: touchscreen_id
+
+  top_layer:
+    widgets:
+      - obj:
+          id: boot_overlay
+          hidden: true
+          x: 0
+          y: 0
+          width: 480
+          height: 320
+          align: top_left
+          clickable: true
+          bg_color: color_black
+          bg_opa: 65%
+          border_opa: transp
+          border_width: 0
+          shadow_opa: transp
+
+      - obj:
+          id: boot_widget
+          hidden: true
+          x: 0
+          y: 0
+          width: 480
+          height: 320
+          align: top_left
+          pad_all: 0
+          radius: 0
+          bg_color: color_primary
+          bg_opa: cover
+          border_opa: transp
+          border_width: 0
+          shadow_opa: transp
+          widgets:
+            - label:
+                x: 0
+                y: 90
+                width: 300
+                align: top_mid
+                text_align: center
+                text_font: nunito_30
+                text_color: color_white
+                text: "Загрузка..."
+
+            - bar:
+                id: boot_progress_bar
+                x: 0
+                y: 155
+                width: 240
+                height: 24
+                align: top_mid
+                min_value: 0
+                max_value: 100
+                value: 70
+                bg_color: color_black
+                bg_opa: 35%
+                radius: 12
+                indicator:
+                  bg_color: color_orange
+                  bg_opa: cover
+                  radius: 12
+
+      - obj:
+          id: stove_settings_overlay
+          hidden: true
+          x: 0
+          y: 0
+          width: 480
+          height: 320
+          align: top_left
+          clickable: true
+          bg_opa: transp
+          border_opa: transp
+          border_width: 0
+          shadow_opa: transp
+          on_press:
+            - if:
+                condition:
+                  lambda: 'return id(stove_settings_open);'
+                then:
+                  - script.execute: stove_cancel_hysteresis
+
+      - obj:
+          id: stove_settings_panel
+          hidden: true
+          x: -390
+          y: 0
+          width: 380
+          height: 320
+          align: top_left
+          pad_all: 0
+          bg_color: color_primary
+          border_opa: transp
+          border_width: 0
+          radius: 0
+          shadow_color: color_black
+          shadow_ofs_x: 10
+          shadow_ofs_y: 0
+          shadow_spread: 0
+          shadow_width: 8
+          shadow_opa: 45%
+          scrollable: true
+          widgets:
+            - label:
+                id: stove_hyst_title
+                x: 0
+                y: 10
+                width: 380
+                align: top_left
+                text_align: center
+                text_font: nunito_20
+                text_color: color_white
+                text: "Гистерезис"
+
+            - obj:
+                x: 0
+                y: 30
+                width: 380
+                height: 80
+                align: top_left
+                pad_all: 0
+                bg_opa: transp
+                border_opa: transp
+                border_width: 0
+                widgets:
+                  - obj:
+                      x: 60
+                      y: 10
+                      width: 70
+                      height: 70
+                      align: top_left
+                      radius: 35
+                      clickable: true
+                      pad_all: 0
+                      bg_color: color_primary
+                      bg_opa: cover
+                      border_opa: transp
+                      border_width: 0
+                      shadow_opa: transp
+                      pressed:
+                        bg_opa: 60%
+                      on_press:
+                        - lambda: |-
+                            id(stove_hysteresis_edit)--;
+                            if (id(stove_hysteresis_edit) < ${stove_hysteresis_min}) id(stove_hysteresis_edit) = ${stove_hysteresis_min};
+                        - script.execute: stove_ui_update_hysteresis_label
+                      widgets:
+                        - label:
+                            align: center
+                            text_font: mdi_icons_40
+                            text_color: color_text
+                            text: "${minus_icon}"
+
+                  - label:
+                      id: stove_hysteresis_value_label
+                      x: 0
+                      y: 18
+                      width: 380
+                      align: top_left
+                      text_align: center
+                      text_font: nunito_36
+                      text_color: color_text
+                      text: "3°"
+
+                  - obj:
+                      x: 250
+                      y: 10
+                      width: 70
+                      height: 70
+                      align: top_left
+                      radius: 35
+                      clickable: true
+                      pad_all: 0
+                      bg_color: color_primary
+                      bg_opa: cover
+                      border_opa: transp
+                      border_width: 0
+                      shadow_opa: transp
+                      pressed:
+                        bg_opa: 60%
+                      on_press:
+                        - lambda: |-
+                            id(stove_hysteresis_edit)++;
+                            if (id(stove_hysteresis_edit) > ${stove_hysteresis_max}) id(stove_hysteresis_edit) = ${stove_hysteresis_max};
+                        - script.execute: stove_ui_update_hysteresis_label
+                      widgets:
+                        - label:
+                            align: center
+                            text_font: mdi_icons_40
+                            text_color: color_text
+                            text: "${plus_icon}"
+
+            - obj:
+                x: 40
+                y: 110
+                width: 300
+                height: 2
+                align: top_left
+                radius: 5
+                pad_all: 0
+                bg_color: color_secondary
+                border_opa: transp
+                border_width: 0
+
+            - label:
+                x: 0
+                y: 120
+                width: 380
+                align: top_left
+                text_align: center
+                text_font: nunito_20
+                text_color: color_white
+                text: "Смена темы"
+
+            - obj:
+                x: 30
+                y: 150
+                width: 320
+                height: 70
+                align: top_left
+                pad_all: 0
+                bg_opa: transp
+                border_opa: transp
+                border_width: 0
+                widgets:
+                  - obj:
+                      x: 10
+                      y: 10
+                      width: 46
+                      height: 46
+                      radius: 23
+                      clickable: true
+                      bg_color: color_orange
+                      border_color: color_white
+                      border_width: 2
+                      shadow_opa: transp
+                      on_press:
+                        - button.press: stove_theme_orange_button
+                  - obj:
+                      x: 71
+                      y: 10
+                      width: 46
+                      height: 46
+                      radius: 23
+                      clickable: true
+                      bg_color: color_yellow
+                      border_color: color_white
+                      border_width: 2
+                      shadow_opa: transp
+                      on_press:
+                        - button.press: stove_theme_yellow_button
+                  - obj:
+                      x: 132
+                      y: 10
+                      width: 46
+                      height: 46
+                      radius: 23
+                      clickable: true
+                      bg_color: color_red
+                      border_color: color_white
+                      border_width: 2
+                      shadow_opa: transp
+                      on_press:
+                        - button.press: stove_theme_red_button
+                  - obj:
+                      x: 193
+                      y: 10
+                      width: 46
+                      height: 46
+                      radius: 23
+                      clickable: true
+                      bg_color: color_blue
+                      border_color: color_white
+                      border_width: 2
+                      shadow_opa: transp
+                      on_press:
+                        - button.press: stove_theme_blue_button
+                  - obj:
+                      x: 254
+                      y: 10
+                      width: 46
+                      height: 46
+                      radius: 23
+                      clickable: true
+                      bg_color: color_green
+                      border_color: color_white
+                      border_width: 2
+                      shadow_opa: transp
+                      on_press:
+                        - button.press: stove_theme_green_button
+
+            - obj:
+                x: 40
+                y: 226
+                width: 300
+                height: 2
+                align: top_left
+                radius: 5
+                pad_all: 0
+                bg_color: color_secondary
+                border_opa: transp
+                border_width: 0
+
+            - label:
+                x: 0
+                y: 236
+                width: 380
+                align: top_left
+                text_align: center
+                text_font: nunito_20
+                text_color: color_white
+                text: "Обновление"
+
+            - label:
+                id: stove_current_version_label_ui
+                x: 30
+                y: 260
+                width: 320
+                align: top_left
+                text_align: center
+                text_font: nunito_20
+                text_color: color_text
+                text: "Текущая версия: ${stove_version}"
+
+            - label:
+                id: stove_update_status_label_ui
+                x: 30
+                y: 284
+                width: 320
+                align: top_left
+                text_align: center
+                text_font: nunito_20
+                text_color: color_text
+                text: "Проверка обновления..."
+
+            - obj:
+                x: 0
+                y: 315
+                width: 380
+                height: 70
+                align: top_left
+                pad_all: 0
+                bg_opa: transp
+                border_opa: transp
+                border_width: 0
+                widgets:
+                  - obj:
+                      id: stove_update_button_ui
+                      align: center
+                      width: 180
+                      height: 50
+                      radius: 14
+                      clickable: true
+                      scrollable: false
+                      bg_color: color_primary
+                      bg_opa: cover
+                      border_opa: transp
+                      border_width: 0
+                      shadow_width: 10
+                      shadow_spread: 2
+                      shadow_color: color_black
+                      shadow_opa: 80%
+                      on_press:
+                        - script.execute: stove_run_firmware_update
+                      widgets:
+                        - label:
+                            id: stove_update_button_label_ui
+                            align: center
+                            text_font: nunito_20
+                            text_color: color_blue
+                            text: "Обновить"
+
+            - obj:
+                x: 40
+                y: 395
+                width: 300
+                height: 2
+                align: top_left
+                radius: 5
+                pad_all: 0
+                bg_color: color_secondary
+                border_opa: transp
+                border_width: 0
+
+            - obj:
+                x: 164
+                y: 415
+                width: 52
+                height: 52
+                align: top_left
+                clickable: true
+                radius: 26
+                pad_all: 0
+                bg_color: color_primary
+                bg_opa: cover
+                border_opa: transp
+                border_width: 0
+                shadow_width: 8
+                shadow_spread: 2
+                shadow_color: color_black
+                shadow_opa: 80%
+                on_press:
+                  - script.execute: stove_save_hysteresis
+                widgets:
+                  - label:
+                      align: center
+                      text_font: mdi_icons_28
+                      text_color: color_text
+                      text: "${check_icon}"
+
+      - obj:
+          id: stove_cycle_modal_overlay
+          hidden: true
+          x: 0
+          y: 0
+          width: 480
+          height: 320
+          align: top_left
+          clickable: true
+          bg_color: color_black
+          bg_opa: 35%
+          border_opa: transp
+          border_width: 0
+          shadow_opa: transp
+
+      - obj:
+          id: stove_cycle_modal
+          hidden: true
+          width: 420
+          height: 280
+          align: center
+          pad_all: 0
+          radius: 24
+          bg_color: color_primary
+          border_opa: transp
+          border_width: 0
+          shadow_color: color_black
+          shadow_width: 20
+          shadow_spread: 2
+          shadow_opa: 40%
+          widgets:
+            - label:
+                id: stove_modal_status_label
+                x: 0
+                y: 20
+                width: 380
+                align: top_mid
+                text_align: center
+                text_font: nunito_30
+                text_color: color_white
+                text: "ЦИКЛ ОКОНЧЕН"
+
+            - label:
+                id: stove_modal_alarm_big
+                x: 0
+                y: 78
+                width: 380
+                align: top_mid
+                text_align: center
+                text_font: mdi_icons_100
+                text_color: color_red
+                text: "${alarm_icon}"
+
+            - obj:
+                x: 0
+                y: -24
+                width: 160
+                height: 68
+                align: bottom_mid
+                pad_all: 0
+                bg_opa: transp
+                border_opa: transp
+                border_width: 0
+                shadow_opa: transp
+                widgets:
+                  - obj:
+                      width: 124
+                      height: 52
+                      align: center
+                      clickable: true
+                      radius: 12
+                      pad_all: 0
+                      bg_color: color_primary
+                      bg_opa: cover
+                      border_opa: transp
+                      border_width: 0
+                      shadow_width: 10
+                      shadow_spread: 2
+                      shadow_color: color_black
+                      shadow_opa: 80%
+                      on_press:
+                        - script.execute: stove_close_cycle_modal
+                        - script.execute: stove_reset_all
+                      widgets:
+                        - label:
+                            align: center
+                            text_font: nunito_20
+                            text_color: color_red
+                            text: "СТОП"
+
+      - obj:
+          id: ota_overlay
+          hidden: true
+          x: 0
+          y: 0
+          width: 480
+          height: 320
+          align: top_left
+          clickable: true
+          bg_color: color_black
+          bg_opa: 45%
+          border_opa: transp
+          border_width: 0
+          shadow_opa: transp
+
+      - obj:
+          id: ota_widget
+          hidden: true
+          width: 420
+          height: 260
+          align: center
+          pad_all: 0
+          radius: 24
+          bg_color: color_primary
+          border_opa: transp
+          border_width: 0
+          shadow_color: color_black
+          shadow_width: 20
+          shadow_spread: 2
+          shadow_opa: 40%
+          widgets:
+            - label:
+                id: ota_label_primary
+                x: 0
+                y: 20
+                width: 360
+                align: top_mid
+                text_align: center
+                text_font: nunito_30
+                text_color: color_white
+                text: "Обновление"
+
+            - label:
+                id: ota_label_secondary
+                x: 0
+                y: 70
+                width: 360
+                align: top_mid
+                text_align: center
+                text_font: nunito_20
+                text_color: color_text
+                text: "Подготовка..."
+
+            - bar:
+                id: ota_bar_value
+                x: 0
+                y: 110
+                width: 320
+                height: 24
+                align: top_mid
+                min_value: 0
+                max_value: 100
+                value: 0
+                bg_color: color_black
+                bg_opa: 35%
+                radius: 12
+                indicator:
+                  bg_color: color_orange
+                  bg_opa: cover
+                  radius: 12
+
+            - label:
+                id: ota_percent_label
+                x: 0
+                y: 150
+                width: 200
+                align: top_mid
+                text_align: center
+                text_font: nunito_36
+                text_color: color_blue
+                text: "0%"
+
+            - label:
+                id: ota_bottom_hint
+                x: 0
+                y: -25
+                width: 360
+                align: bottom_mid
+                text_align: center
+                text_font: nunito_20
+                text_color: color_secondary
+                text: "Не выключайте питание"
+
+      - obj:
+          id: stove_wifi_modal_overlay
+          hidden: true
+          x: 0
+          y: 0
+          width: 480
+          height: 320
+          align: top_left
+          clickable: true
+          bg_color: color_black
+          bg_opa: 35%
+          border_opa: transp
+          border_width: 0
+          shadow_opa: transp
+          on_press:
+            - script.execute: stove_close_wifi_modal
+
+      - obj:
+          id: stove_wifi_modal
+          hidden: true
+          width: 420
+          height: 280
+          align: center
+          pad_all: 0
+          radius: 24
+          bg_color: color_primary
+          border_opa: transp
+          border_width: 0
+          shadow_color: color_black
+          shadow_width: 20
+          shadow_spread: 2
+          shadow_opa: 40%
+          widgets:
+            - label:
+                x: 0
+                y: 20
+                width: 360
+                align: top_mid
+                text_align: center
+                text_font: nunito_30
+                text_color: color_white
+                text: "Wi-Fi"
+
+            - label:
+                id: stove_wifi_modal_status
+                x: 0
+                y: 82
+                width: 360
+                align: top_mid
+                text_align: center
+                text_font: nunito_26
+                text_color: color_text
+                text: "Статус: Нет подключения"
+
+            - label:
+                id: stove_wifi_modal_ip
+                x: 0
+                y: 128
+                width: 360
+                align: top_mid
+                text_align: center
+                text_font: nunito_26
+                text_color: color_orange
+                text: "IP: --"
+
+            - label:
+                id: stove_wifi_modal_rssi
+                x: 0
+                y: 174
+                width: 360
+                align: top_mid
+                text_align: center
+                text_font: nunito_20
+                text_color: color_secondary
+                text: "Сигнал: -- dBm"
+
+            - obj:
+                x: 184
+                y: 214
+                width: 52
+                height: 52
+                align: top_left
+                clickable: true
+                radius: 26
+                pad_all: 0
+                bg_color: color_primary
+                bg_opa: cover
+                border_opa: transp
+                border_width: 0
+                shadow_width: 8
+                shadow_spread: 2
+                shadow_color: color_black
+                shadow_opa: 80%
+                on_press:
+                  - script.execute: stove_close_wifi_modal
+                widgets:
+                  - label:
+                      align: center
+                      text_font: mdi_icons_28
+                      text_color: color_text
+                      text: "${check_icon}"
+
+  pages:
+    - id: stove_main_page
+      bg_color: color_primary
+      scrollable: false
+      widgets:
+        - obj:
+            id: stove_top_bar
+            x: 0
+            y: 0
+            width: 480
+            height: 70
+            align: top_left
+            pad_all: 0
+            bg_color: color_primary
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            scrollable: false
+            radius: 0
+            widgets:
+              - obj:
+                  id: stove_wifi_button
+                  x: 16
+                  y: 8
+                  width: 52
+                  height: 52
+                  align: top_left
+                  pad_all: 0
+                  radius: 26
+                  bg_color: color_primary
+                  bg_opa: cover
+                  border_opa: transp
+                  border_width: 0
+                  clickable: true
+                  shadow_width: 8
+                  shadow_spread: 2
+                  shadow_color: color_black
+                  shadow_opa: 80%
+                  on_press:
+                    - script.execute: stove_open_wifi_modal
+                  widgets:
+                    - label:
+                        id: stove_wifi_icon_ui
+                        align: center
+                        text_font: mdi_icons_28
+                        text_color: 0x808080
+                        text: "${wifi_icon}"
+
+              - label:
+                  id: stove_top_status_label
+                  x: 0
+                  y: 0
+                  width: 300
+                  height: 40
+                  align: center
+                  text_align: center
+                  text_font: nunito_26
+                  text_color: 0xC7D0E0
+                  text: "ОЖИДАНИЕ"
+
+              - obj:
+                  id: stove_top_settings_button
+                  x: -16
+                  y: 8
+                  width: 52
+                  height: 52
+                  align: top_right
+                  pad_all: 0
+                  radius: 26
+                  bg_color: color_primary
+                  bg_opa: cover
+                  border_opa: transp
+                  border_width: 0
+                  clickable: true
+                  shadow_width: 8
+                  shadow_spread: 2
+                  shadow_color: color_black
+                  shadow_opa: 80%
+                  on_press:
+                    - script.execute: stove_toggle_settings_panel
+                  widgets:
+                    - label:
+                        align: center
+                        text_font: mdi_icons_28
+                        text_color: color_text
+                        text: "${settings_icon}"
+
+        - obj:
+            id: stove_middle_block
+            x: 0
+            y: 70
+            width: 480
+            height: 180
+            align: top_left
+            pad_all: 0
+            bg_color: color_primary
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            scrollable: false
+            radius: 0
+            widgets:
+              - obj:
+                  id: stove_temp_block
+                  x: 0
+                  y: 0
+                  width: 240
+                  height: 180
+                  align: top_left
+                  pad_all: 0
+                  bg_opa: transp
+                  border_opa: transp
+                  border_width: 0
+                  shadow_opa: transp
+                  scrollable: false
+                  widgets:
+                    - arc:
+                        id: stove_arc_main_current
+                        width: 156
+                        height: 156
+                        align: center
+                        adjustable: false
+                        clickable: false
+                        adv_hittest: false
+                        min_value: ${stove_min_temp}
+                        max_value: ${stove_max_temp}
+                        value: ${stove_min_temp}
+                        start_angle: 0
+                        end_angle: 360
+                        rotation: 270.0
+                        arc_width: 12
+                        arc_color: color_black
+                        arc_opa: 35%
+                        indicator:
+                          arc_color: color_orange
+                          arc_width: 12
+                        knob:
+                          bg_opa: transp
+                          border_opa: transp
+                    - obj:
+                        id: stove_temp_open_button
+                        width: 124
+                        height: 124
+                        align: center
+                        radius: 62
+                        clickable: true
+                        scrollable: false
+                        pad_all: 0
+                        bg_color: color_primary
+                        bg_opa: cover
+                        border_opa: transp
+                        border_width: 0
+                        shadow_opa: transp
+                        pressed:
+                          bg_color: color_primary
+                          bg_opa: 60%
+                        on_press:
+                          - script.execute: stove_open_temp_page
+                        widgets:
+                          - label:
+                              id: stove_main_current_temp_label
+                              width: 120
+                              y: -14
+                              align: center
+                              text_align: center
+                              text_font: nunito_30
+                              text_color: color_orange
+                              text: "--.-°"
+
+                          - label:
+                              id: stove_main_target_temp_label
+                              x: 0
+                              y: 18
+                              width: 120
+                              align: center
+                              text_align: center
+                              text_font: nunito_26
+                              text_color: color_secondary
+                              text: "5°"
+
+              - obj:
+                  id: stove_timer_block
+                  x: 240
+                  y: 0
+                  width: 240
+                  height: 180
+                  align: top_left
+                  pad_all: 0
+                  bg_opa: transp
+                  border_opa: transp
+                  border_width: 0
+                  shadow_opa: transp
+                  scrollable: false
+                  widgets:
+                    - arc:
+                        id: stove_arc_main_timer
+                        width: 156
+                        height: 156
+                        align: center
+                        adjustable: false
+                        clickable: false
+                        adv_hittest: false
+                        min_value: 0
+                        max_value: 1000
+                        value: 0
+                        start_angle: 0
+                        end_angle: 360
+                        rotation: 270.0
+                        arc_width: 12
+                        arc_color: color_black
+                        arc_opa: 35%
+                        indicator:
+                          arc_color: color_orange
+                          arc_width: 12
+                        knob:
+                          bg_opa: transp
+                          border_opa: transp
+                    - obj:
+                        id: stove_timer_open_button
+                        width: 124
+                        height: 124
+                        align: center
+                        radius: 62
+                        clickable: true
+                        scrollable: false
+                        pad_all: 0
+                        bg_color: color_primary
+                        bg_opa: cover
+                        border_opa: transp
+                        border_width: 0
+                        shadow_opa: transp
+                        pressed:
+                          bg_color: color_primary
+                          bg_opa: 60%
+                        on_press:
+                          - script.execute: stove_open_timer_page
+                        widgets:
+                          - label:
+                              id: stove_main_remaining_label
+                              width: 140
+                              align: center
+                              text_align: center
+                              text_font: nunito_20
+                              text_color: color_white
+                              text: "00:00:00"
+
+        - obj:
+            id: stove_heat_indicator
+            hidden: true
+            x: 0
+            y: 58
+            width: 60
+            height: 60
+            align: top_mid
+            pad_all: 0
+            bg_opa: transp
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            widgets:
+              - label:
+                  align: center
+                  text_font: mdi_icons_40
+                  text_color: color_orange
+                  text: "${heat_icon}"
+
+        - obj:
+            id: stove_bottom_action
+            x: 0
+            y: 245
+            width: 480
+            height: 75
+            align: top_left
+            pad_all: 0
+            bg_color: color_primary
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            radius: 0
+            widgets:
+              - obj:
+                  id: stove_bg_lighten_start_stop_button
+                  x: 0
+                  y: 0
+                  width: 170
+                  height: 52
+                  align: center
+                  clickable: false
+                  radius: 16
+                  pad_all: 0
+                  bg_opa: transp
+                  border_opa: transp
+                  border_width: 0
+                  shadow_width: 8
+                  shadow_spread: 2
+                  shadow_ofs_x: 0
+                  shadow_ofs_y: -3
+                  shadow_color: color_white
+                  shadow_opa: 15%
+              - obj:
+                  id: stove_bg_darken_start_stop_button
+                  x: 0
+                  y: 0
+                  width: 170
+                  height: 52
+                  align: center
+                  clickable: false
+                  radius: 16
+                  pad_all: 0
+                  bg_opa: transp
+                  border_opa: transp
+                  border_width: 0
+                  shadow_width: 10
+                  shadow_spread: 2
+                  shadow_ofs_x: 0
+                  shadow_ofs_y: 5
+                  shadow_color: color_black
+                  shadow_opa: 80%
+              - obj:
+                  id: stove_bg_border_start_stop_button
+                  x: 0
+                  y: 0
+                  width: 170
+                  height: 52
+                  align: center
+                  clickable: false
+                  radius: 16
+                  pad_all: 0
+                  bg_color: color_black
+                  bg_opa: cover
+                  border_opa: transp
+                  border_width: 0
+                  shadow_width: 4
+                  shadow_spread: 1
+                  shadow_ofs_x: 0
+                  shadow_ofs_y: 2
+                  shadow_color: color_white
+                  shadow_opa: 20%
+              - obj:
+                  id: stove_main_start_stop_button
+                  x: 1
+                  y: 1
+                  width: 160
+                  height: 44
+                  align: center
+                  clickable: true
+                  radius: 12
+                  pad_all: 0
+                  bg_color: color_primary
+                  bg_opa: cover
+                  border_opa: transp
+                  border_width: 0
+                  shadow_width: 4
+                  shadow_spread: 1
+                  shadow_ofs_x: -1
+                  shadow_ofs_y: -1
+                  shadow_color: color_white
+                  shadow_opa: 60%
+                  pressed:
+                    bg_color: color_primary
+                    bg_opa: 60%
+                  on_press:
+                    - if:
+                        condition:
+                          lambda: 'return id(stove_cycle_running) || id(stove_cycle_finished);'
+                        then:
+                          - script.execute: stove_close_cycle_modal
+                          - script.execute: stove_reset_all
+                        else:
+                          - if:
+                              condition:
+                                lambda: 'return (id(stove_timer_hours) == 0 && id(stove_timer_minutes) == 0);'
+                              then:
+                                - lambda: |-
+                                    ESP_LOGI("stove_cycle", "Cycle START blocked: timer is 00:00");
+                                    id(stove_timer_invalid) = true;
+                                    id(stove_cycle_running) = false;
+                                    id(stove_hold_started) = false;
+                                    id(stove_cycle_finished) = false;
+                                    id(stove_heating_output_state) = false;
+                                    id(stove_alarm_output_state) = false;
+                                    id(stove_remaining_sec) = 0;
+                                    id(stove_target_reached_latch_sec) = 0;
+                                - switch.turn_off: stove_heat_relay
+                                - switch.turn_off: stove_alarm_relay
+                                - climate.control:
+                                    id: stove_thermostat
+                                    mode: "OFF"
+                                    target_temperature: !lambda 'return id(stove_target_temp);'
+                                - script.execute: stove_ui_update_status
+                                - script.execute: stove_ui_update_timer
+                                - script.execute: stove_ui_update_start_stop
+                              else:
+                                - lambda: |-
+                                    ESP_LOGI("stove_cycle", "Cycle START pressed");
+                                    id(stove_timer_invalid) = false;
+                                    id(stove_cycle_running) = true;
+                                    id(stove_hold_started) = false;
+                                    id(stove_cycle_finished) = false;
+                                    id(stove_alarm_output_state) = false;
+                                    id(stove_remaining_sec) = 0;
+                                    id(stove_target_reached_latch_sec) = 0;
+                                    ESP_LOGI("stove_cycle", "Cycle started: target=%d hyst=%d timer=%02d:%02d",
+                                             id(stove_target_temp), id(stove_hysteresis),
+                                             id(stove_timer_hours), id(stove_timer_minutes));
+                                - climate.control:
+                                    id: stove_thermostat
+                                    mode: "HEAT"
+                                    target_temperature: !lambda 'return id(stove_target_temp);'
+                                - script.execute: stove_ui_update_status
+                                - script.execute: stove_ui_update_timer
+                                - script.execute: stove_ui_update_start_stop
+                  widgets:
+                    - label:
+                        id: stove_main_start_stop_label
+                        align: center
+                        text_font: nunito_26
+                        text_color: color_green
+                        text: "СТАРТ"
+
+    - id: stove_temp_page
+      bg_color: color_primary
+      scrollable: false
+      widgets:
+        - obj:
+            x: 18
+            y: 18
+            width: 52
+            height: 52
+            align: top_left
+            pad_all: 0
+            radius: 26
+            bg_color: color_primary
+            bg_opa: cover
+            border_opa: transp
+            border_width: 0
+            clickable: true
+            shadow_width: 8
+            shadow_spread: 2
+            shadow_color: color_black
+            shadow_opa: 80%
+            on_press:
+              - script.execute: stove_cancel_temp_edit
+            widgets:
+              - label:
+                  align: center
+                  text_font: mdi_icons_28
+                  text_color: color_text
+                  text: "${back_icon}"
+
+        - obj:
+            id: stove_bg_main_temperature_page
+            hidden: false
+            width: 320
+            height: 320
+            x: 0
+            y: 0
+            align: center
+            pad_all: 0
+            bg_opa: transp
+            scrollable: false
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            widgets:
+              - arc:
+                  id: stove_arc_current_temperature
+                  clickable: false
+                  adjustable: false
+                  adv_hittest: false
+                  align: center
+                  width: 260
+                  height: 260
+                  min_value: ${stove_min_temp}
+                  max_value: ${stove_max_temp}
+                  value: ${stove_min_temp}
+                  arc_width: 24
+                  arc_color: color_text
+                  arc_opa: transp
+                  indicator:
+                    arc_opa: transp
+                    arc_width: 24
+                  knob:
+                    bg_opa: transp
+                    border_opa: transp
+
+              - arc:
+                  id: stove_arc_target_edit
+                  adjustable: true
+                  adv_hittest: true
+                  align: center
+                  width: 260
+                  height: 260
+                  min_value: ${stove_min_temp}
+                  max_value: ${stove_max_temp}
+                  value: ${stove_min_temp}
+                  arc_width: 24
+                  arc_color: color_secondary
+                  arc_opa: cover
+                  indicator:
+                    arc_color: color_orange
+                    arc_width: 24
+                  knob:
+                    pad_all: 0
+                    bg_color: color_white
+                    border_color: color_orange
+                    border_width: 4
+                  on_value:
+                    - lambda: |-
+                        if (!id(stove_ui_user_adjusting_target)) {
+                          id(stove_ui_user_adjusting_target) = true;
+                        }
+                        id(stove_target_temp_edit) = lv_arc_get_value(id(stove_arc_target_edit));
+                    - script.execute: stove_ui_update_target_temp_edit
+                  on_release:
+                    - lambda: |-
+                        id(stove_ui_user_adjusting_target) = false;
+                    - script.execute: stove_ui_update_target_temp_edit
+
+              - obj:
+                  width: 150
+                  height: 100
+                  align: center
+                  scrollable: false
+                  bg_opa: transp
+                  border_opa: transp
+                  border_width: 0
+                  shadow_opa: transp
+                  widgets:
+                    - label:
+                        id: stove_temp_page_edit_label
+                        x: 0
+                        y: -18
+                        width: 150
+                        align: center
+                        text_align: center
+                        text_font: nunito_42
+                        text_color: color_orange
+                        text: "${stove_default_temp}°"
+
+                    - label:
+                        id: stove_temp_page_current_label
+                        x: 0
+                        y: 24
+                        width: 150
+                        align: center
+                        text_align: center
+                        text_font: nunito_26
+                        text_color: color_secondary
+                        text: "0.0°"
+
+        - obj:
+            x: -26
+            y: -48
+            width: 64
+            height: 64
+            align: right_mid
+            radius: 32
+            clickable: true
+            pad_all: 0
+            bg_color: color_primary
+            bg_opa: cover
+            border_opa: transp
+            border_width: 0
+            shadow_width: 8
+            shadow_spread: 2
+            shadow_color: color_black
+            shadow_opa: 80%
+            on_press:
+              - lambda: |-
+                  int cur = id(stove_target_temp_edit);
+                  cur += 1;
+                  if (cur > ${stove_max_temp}) cur = ${stove_max_temp};
+                  id(stove_target_temp_edit) = cur;
+                  lv_arc_set_value(id(stove_arc_target_edit), cur);
+                  ESP_LOGI("stove_ui", "Target edit increased to %d", cur);
+              - script.execute: stove_ui_update_target_temp_edit
+            widgets:
+              - label:
+                  align: center
+                  text_font: mdi_icons_40
+                  text_color: color_text
+                  text: "${plus_icon}"
+
+        - obj:
+            x: -26
+            y: 48
+            width: 64
+            height: 64
+            align: right_mid
+            radius: 32
+            clickable: true
+            pad_all: 0
+            bg_color: color_primary
+            bg_opa: cover
+            border_opa: transp
+            border_width: 0
+            shadow_width: 8
+            shadow_spread: 2
+            shadow_color: color_black
+            shadow_opa: 80%
+            on_press:
+              - lambda: |-
+                  int cur = id(stove_target_temp_edit);
+                  cur -= 1;
+                  if (cur < ${stove_min_temp}) cur = ${stove_min_temp};
+                  id(stove_target_temp_edit) = cur;
+                  lv_arc_set_value(id(stove_arc_target_edit), cur);
+                  ESP_LOGI("stove_ui", "Target edit decreased to %d", cur);
+              - script.execute: stove_ui_update_target_temp_edit
+            widgets:
+              - label:
+                  align: center
+                  text_font: mdi_icons_40
+                  text_color: color_text
+                  text: "${minus_icon}"
+
+        - obj:
+            x: 20
+            y: -20
+            width: 52
+            height: 52
+            align: bottom_left
+            clickable: true
+            radius: 26
+            pad_all: 0
+            bg_color: color_primary
+            bg_opa: cover
+            border_opa: transp
+            border_width: 0
+            shadow_width: 8
+            shadow_spread: 2
+            shadow_color: color_black
+            shadow_opa: 80%
+            on_press:
+              - script.execute: stove_save_temp_edit
+            widgets:
+              - label:
+                  align: center
+                  text_font: mdi_icons_28
+                  text_color: color_text
+                  text: "${check_icon}"
+
+    - id: stove_timer_page
+      bg_color: color_primary
+      scrollable: false
+      widgets:
+        - obj:
+            id: stove_timer_page_header
+            x: 0
+            y: 0
+            width: 480
+            height: 70
+            align: top_left
+            pad_all: 0
+            bg_color: color_primary
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            scrollable: false
+            widgets:
+              - obj:
+                  x: 18
+                  y: 9
+                  width: 52
+                  height: 52
+                  align: top_left
+                  pad_all: 0
+                  radius: 26
+                  bg_color: color_primary
+                  bg_opa: cover
+                  border_opa: transp
+                  border_width: 0
+                  clickable: true
+                  shadow_width: 8
+                  shadow_spread: 2
+                  shadow_color: color_black
+                  shadow_opa: 80%
+                  on_press:
+                    - script.execute: stove_back_to_main_page
+                  widgets:
+                    - label:
+                        align: center
+                        text_font: mdi_icons_28
+                        text_color: color_text
+                        text: "${back_icon}"
+
+              - label:
+                  x: 0
+                  y: 22
+                  width: 320
+                  height: 40
+                  align: center
+                  text_align: center
+                  text_font: nunito_20
+                  text_color: color_white
+                  text: "ТАЙМЕР"
+
+        - obj:
+            id: stove_timer_page_body
+            x: 0
+            y: 70
+            width: 480
+            height: 180
+            align: top_left
+            pad_all: 0
+            bg_color: color_primary
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            widgets:
+              - roller:
+                  id: stove_timer_hours_roller_page
+                  x: 120
+                  y: 10
+                  width: 90
+                  height: 160
+                  align: top_left
+                  visible_row_count: 3
+                  mode: NORMAL
+                  anim_time: 150ms
+                  options:
+                    - "00"
+                    - "01"
+                    - "02"
+                    - "03"
+                    - "04"
+                    - "05"
+                    - "06"
+                    - "07"
+                    - "08"
+                    - "09"
+                    - "10"
+                    - "11"
+                    - "12"
+                    - "13"
+                    - "14"
+                    - "15"
+                    - "16"
+                    - "17"
+                    - "18"
+                    - "19"
+                    - "20"
+                    - "21"
+                    - "22"
+                    - "23"
+                  selected_index: 0
+                  text_font: nunito_26
+                  text_color: color_secondary
+                  bg_color: color_primary
+                  border_opa: transp
+                  border_width: 0
+                  selected:
+                    text_font: nunito_36
+                    text_color: color_white
+                    bg_color: color_primary
+                  on_value:
+                    - if:
+                        condition:
+                          lambda: 'return !id(stove_cycle_running);'
+                        then:
+                          - lambda: |-
+                              id(stove_timer_hours) = x;
+                              id(stove_timer_invalid) = false;
+                          - script.execute: stove_ui_update_timer
+                          - script.execute: stove_ui_update_status
+
+              - label:
+                  x: 225
+                  y: 63
+                  align: top_left
+                  text_font: nunito_36
+                  text_color: color_white
+                  text: ":"
+
+              - roller:
+                  id: stove_timer_minutes_roller_page
+                  x: 255
+                  y: 10
+                  width: 90
+                  height: 160
+                  align: top_left
+                  visible_row_count: 3
+                  mode: NORMAL
+                  anim_time: 150ms
+                  options:
+                    - "00"
+                    - "01"
+                    - "02"
+                    - "03"
+                    - "04"
+                    - "05"
+                    - "06"
+                    - "07"
+                    - "08"
+                    - "09"
+                    - "10"
+                    - "11"
+                    - "12"
+                    - "13"
+                    - "14"
+                    - "15"
+                    - "16"
+                    - "17"
+                    - "18"
+                    - "19"
+                    - "20"
+                    - "21"
+                    - "22"
+                    - "23"
+                    - "24"
+                    - "25"
+                    - "26"
+                    - "27"
+                    - "28"
+                    - "29"
+                    - "30"
+                    - "31"
+                    - "32"
+                    - "33"
+                    - "34"
+                    - "35"
+                    - "36"
+                    - "37"
+                    - "38"
+                    - "39"
+                    - "40"
+                    - "41"
+                    - "42"
+                    - "43"
+                    - "44"
+                    - "45"
+                    - "46"
+                    - "47"
+                    - "48"
+                    - "49"
+                    - "50"
+                    - "51"
+                    - "52"
+                    - "53"
+                    - "54"
+                    - "55"
+                    - "56"
+                    - "57"
+                    - "58"
+                    - "59"
+                  selected_index: 0
+                  text_font: nunito_26
+                  text_color: color_secondary
+                  bg_color: color_primary
+                  border_opa: transp
+                  border_width: 0
+                  selected:
+                    text_font: nunito_36
+                    text_color: color_white
+                    bg_color: color_primary
+                  on_value:
+                    - if:
+                        condition:
+                          lambda: 'return !id(stove_cycle_running);'
+                        then:
+                          - lambda: |-
+                              id(stove_timer_minutes) = x;
+                              id(stove_timer_invalid) = false;
+                          - script.execute: stove_ui_update_timer
+                          - script.execute: stove_ui_update_status
+
+        - obj:
+            id: stove_timer_page_footer
+            x: 0
+            y: 245
+            width: 480
+            height: 75
+            align: top_left
+            pad_all: 0
+            bg_color: color_primary
+            border_opa: transp
+            border_width: 0
+            shadow_opa: transp
+            widgets:
+              - obj:
+                  width: 52
+                  height: 52
+                  align: center
+                  clickable: true
+                  radius: 26
+                  pad_all: 0
+                  bg_color: color_primary
+                  bg_opa: cover
+                  border_opa: transp
+                  border_width: 0
+                  shadow_width: 8
+                  shadow_spread: 2
+                  shadow_color: color_black
+                  shadow_opa: 80%
+                  on_press:
+                    - script.execute: stove_back_to_main_page
+                  widgets:
+                    - label:
+                        align: center
+                        text_font: mdi_icons_28
+                        text_color: color_text
+                        text: "${check_icon}"
+
+script:
+  - id: stove_update_arc_range
+    then:
+      - lambda: |-
+          if (id(stove_arc_range_initialized)) return;
+
+          int min_scaled = ${stove_min_temp};
+          int max_scaled = ${stove_max_temp};
+
+          lv_arc_set_range(id(stove_arc_target_edit), min_scaled, max_scaled);
+          lv_arc_set_range(id(stove_arc_main_current), min_scaled, max_scaled);
+          lv_arc_set_range(id(stove_arc_current_temperature), min_scaled, max_scaled);
+          lv_arc_set_range(id(stove_arc_main_timer), 0, 1000);
+
+          int tgt = id(stove_target_temp);
+          if (tgt < min_scaled) tgt = min_scaled;
+          if (tgt > max_scaled) tgt = max_scaled;
+          lv_arc_set_value(id(stove_arc_target_edit), tgt);
+
+          if (id(${stove_temp_sensor_id}).has_state()) {
+            int cur = (int)(id(${stove_temp_sensor_id}).state + 0.5f);
+            if (cur < min_scaled) cur = min_scaled;
+            if (cur > max_scaled) cur = max_scaled;
+            lv_arc_set_value(id(stove_arc_main_current), cur);
+            lv_arc_set_value(id(stove_arc_current_temperature), cur);
+          } else {
+            lv_arc_set_value(id(stove_arc_main_current), min_scaled);
+            lv_arc_set_value(id(stove_arc_current_temperature), min_scaled);
+          }
+
+          lv_arc_set_value(id(stove_arc_main_timer), 0);
+
+          id(stove_arc_range_initialized) = true;
+          ESP_LOGI("stove_ui", "Arc range initialized");
+
+  - id: stove_sync_climate
+    then:
+      - climate.control:
+          id: stove_thermostat
+          target_temperature: !lambda |-
+            return id(stove_target_temp);
+
+  - id: stove_refresh_wifi_info
+    then:
+      - lambda: |-
+          std::string ip_text = "Нет подключения";
+
+          auto addrs = esphome::network::get_ip_addresses();
+          for (auto &addr : addrs) {
+            if (addr.is_set()) {
+              char buf[esphome::network::IP_ADDRESS_BUFFER_SIZE];
+              addr.str_to(buf);
+              ip_text = buf;
+              break;
+            }
+          }
+
+          if (!id(stove_wifi_connected)) {
+            ip_text = "Нет подключения";
+          }
+
+          id(stove_wifi_ip_text).publish_state(ip_text);
+
+  - id: stove_fetch_update_info
+    then:
+      - lambda: |-
+          id(stove_update_info_ok) = false;
+          id(stove_update_md5).clear();
+          id(stove_update_ota_url).clear();
+          id(stove_update_available_cached) = false;
+          id(stove_update_latest_version).clear();
+          lv_label_set_text(id(stove_update_status_label_ui), "Проверка обновлений...");
+          lv_obj_set_style_text_color(id(stove_update_button_label_ui), lv_color_hex(0x606682), 0);
+      - http_request.get:
+          url: ${update_info_url}
+          capture_response: true
+          on_response:
+            then:
+              - lambda: |-
+                  if (body.rfind("<!DOCTYPE html>", 0) == 0 || body.find("<html") != std::string::npos) {
+                    ESP_LOGW("stove_update", "manifest.json URL returned HTML instead of JSON");
+                    lv_label_set_text(id(stove_update_status_label_ui), "Ошибка манифеста");
+                    return;
+                  }
+
+                  auto extract_json_string = [&](const std::string &src, const std::string &key) -> std::string {
+                    std::string pattern = "\"" + key + "\"";
+                    size_t k = src.find(pattern);
+                    if (k == std::string::npos) return "";
+                    size_t colon = src.find(':', k + pattern.size());
+                    if (colon == std::string::npos) return "";
+                    size_t first_quote = src.find('"', colon + 1);
+                    if (first_quote == std::string::npos) return "";
+                    size_t second_quote = src.find('"', first_quote + 1);
+                    if (second_quote == std::string::npos) return "";
+                    return src.substr(first_quote + 1, second_quote - first_quote - 1);
+                  };
+
+                  std::string ota_url = extract_json_string(body, "ota_url");
+                  std::string md5 = extract_json_string(body, "md5");
+                  std::string version = extract_json_string(body, "version");
+
+                  if (ota_url.empty() || md5.empty()) {
+                    ESP_LOGW("stove_update", "manifest.json missing ota_url or md5");
+                    lv_label_set_text(id(stove_update_status_label_ui), "Нет данных обновления");
+                    return;
+                  }
+
+                  id(stove_update_ota_url) = ota_url;
+                  id(stove_update_md5) = md5;
+                  id(stove_update_info_ok) = true;
+
+                  if (!version.empty()) {
+                    if (version.rfind("v", 0) == 0) {
+                      id(stove_update_latest_version) = version.substr(1);
+                    } else {
+                      id(stove_update_latest_version) = version;
+                    }
+
+                    std::string remote_v = id(stove_update_latest_version);
+                    std::string local_v = "${stove_version}";
+
+                    if (remote_v != local_v) {
+                      id(stove_update_available_cached) = true;
+                      ESP_LOGI("stove_update", "UPDATE AVAILABLE: %s -> %s", local_v.c_str(), remote_v.c_str());
+                    } else {
+                      id(stove_update_available_cached) = false;
+                      ESP_LOGI("stove_update", "Firmware is up to date.");
+                    }
+                  }
+
+                  if (id(stove_update_available_cached)) {
+                    std::string txt = "Есть обновление";
+                    if (!id(stove_update_latest_version).empty()) {
+                      txt += ": " + id(stove_update_latest_version);
+                    }
+                    lv_label_set_text(id(stove_update_status_label_ui), txt.c_str());
+                    lv_obj_set_style_text_color(id(stove_update_button_label_ui), lv_color_hex(id(stove_theme_color_hex)), 0);
+                  } else {
+                    lv_label_set_text(id(stove_update_status_label_ui), "Нет обновлений");
+                    lv_obj_set_style_text_color(id(stove_update_button_label_ui), lv_color_hex(0x606682), 0);
+                  }
+
+  - id: stove_run_firmware_update
+    then:
+      - lambda: |-
+          if (!id(stove_update_available_cached)) {
+            ESP_LOGI("stove_update", "No update available");
+            lv_label_set_text(id(stove_update_status_label_ui), "Нет обновлений");
+            return;
+          }
+
+          if (!id(stove_update_info_ok) || id(stove_update_ota_url).empty() || id(stove_update_md5).empty()) {
+            ESP_LOGW("stove_update", "Update info is not ready yet");
+            lv_label_set_text(id(stove_update_status_label_ui), "Нет данных для OTA");
+            return;
+          }
+      - lambda: |-
+          ESP_LOGI("stove_update", "Starting OTA via UI widget");
+      - ota.http_request.flash:
+          id: ota_http_request
+          url: !lambda |-
+            return id(stove_update_ota_url);
+          md5: !lambda |-
+            return id(stove_update_md5);
+
+  - id: stove_apply_theme
+    then:
+      - lambda: |-
+          switch (id(stove_theme_index)) {
+            case 0: id(stove_theme_color_hex) = 0xFF6600; break;
+            case 1: id(stove_theme_color_hex) = 0xE7C12C; break;
+            case 2: id(stove_theme_color_hex) = 0xFF0000; break;
+            case 3: id(stove_theme_color_hex) = 0x4C9FFF; break;
+            case 4: id(stove_theme_color_hex) = 0x5CA848; break;
+            default: id(stove_theme_color_hex) = 0xFF6600; break;
+          }
+
+          lv_color_t c = lv_color_hex(id(stove_theme_color_hex));
+
+          lv_obj_set_style_arc_color(id(stove_arc_main_current), c, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(stove_arc_target_edit), c, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(stove_arc_main_timer), c, LV_PART_INDICATOR);
+          lv_obj_set_style_border_color(id(stove_arc_target_edit), c, LV_PART_KNOB);
+          lv_obj_set_style_bg_color(id(ota_bar_value), c, LV_PART_INDICATOR);
+          lv_obj_set_style_bg_color(id(boot_progress_bar), c, LV_PART_INDICATOR);
+
+          lv_obj_set_style_text_color(id(ota_percent_label), c, 0);
+          lv_obj_set_style_text_color(id(stove_wifi_modal_ip), c, 0);
+          lv_obj_set_style_text_color(id(stove_main_current_temp_label), c, 0);
+          lv_obj_set_style_text_color(id(stove_temp_page_edit_label), c, 0);
+          lv_obj_set_style_text_color(id(stove_main_start_stop_label), c, 0);
+
+          if (id(stove_wifi_connected)) {
+            lv_obj_set_style_text_color(id(stove_wifi_icon_ui), c, 0);
+          } else {
+            lv_obj_set_style_text_color(id(stove_wifi_icon_ui), lv_color_hex(0x808080), 0);
+          }
+
+          if (id(stove_update_available_cached)) {
+            lv_obj_set_style_text_color(id(stove_update_button_label_ui), c, 0);
+          } else {
+            lv_obj_set_style_text_color(id(stove_update_button_label_ui), lv_color_hex(0x606682), 0);
+          }
+
+  - id: stove_apply_theme_preview
+    then:
+      - lambda: |-
+          int theme_hex = 0xFF6600;
+          switch (id(stove_theme_index_edit)) {
+            case 0: theme_hex = 0xFF6600; break;
+            case 1: theme_hex = 0xE7C12C; break;
+            case 2: theme_hex = 0xFF0000; break;
+            case 3: theme_hex = 0x4C9FFF; break;
+            case 4: theme_hex = 0x5CA848; break;
+            default: theme_hex = 0xFF6600; break;
+          }
+
+          id(stove_theme_color_hex) = theme_hex;
+          lv_color_t c = lv_color_hex(theme_hex);
+
+          lv_obj_set_style_arc_color(id(stove_arc_main_current), c, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(stove_arc_target_edit), c, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(stove_arc_main_timer), c, LV_PART_INDICATOR);
+          lv_obj_set_style_border_color(id(stove_arc_target_edit), c, LV_PART_KNOB);
+          lv_obj_set_style_bg_color(id(ota_bar_value), c, LV_PART_INDICATOR);
+          lv_obj_set_style_bg_color(id(boot_progress_bar), c, LV_PART_INDICATOR);
+
+          lv_obj_set_style_text_color(id(ota_percent_label), c, 0);
+          lv_obj_set_style_text_color(id(stove_wifi_modal_ip), c, 0);
+          lv_obj_set_style_text_color(id(stove_main_current_temp_label), c, 0);
+          lv_obj_set_style_text_color(id(stove_temp_page_edit_label), c, 0);
+          lv_obj_set_style_text_color(id(stove_main_start_stop_label), c, 0);
+
+          if (id(stove_wifi_connected)) {
+            lv_obj_set_style_text_color(id(stove_wifi_icon_ui), c, 0);
+          } else {
+            lv_obj_set_style_text_color(id(stove_wifi_icon_ui), lv_color_hex(0x808080), 0);
+          }
+
+          if (id(stove_update_available_cached)) {
+            lv_obj_set_style_text_color(id(stove_update_button_label_ui), c, 0);
+          } else {
+            lv_obj_set_style_text_color(id(stove_update_button_label_ui), lv_color_hex(0x606682), 0);
+          }
+
+  - id: stove_ui_update_hysteresis_label
+    then:
+      - lambda: |-
+          static char buf[16];
+          snprintf(buf, sizeof(buf), "%d°", id(stove_hysteresis_edit));
+          lv_label_set_text(id(stove_hysteresis_value_label), buf);
+
+  - id: stove_ui_update_target_temp_edit
+    then:
+      - lambda: |-
+          static char buf[16];
+          snprintf(buf, sizeof(buf), "%d°", id(stove_target_temp_edit));
+          lv_label_set_text(id(stove_temp_page_edit_label), buf);
+
+  - id: stove_ui_update_target_temp_main
+    then:
+      - lambda: |-
+          static char buf[16];
+          snprintf(buf, sizeof(buf), "%d°", id(stove_target_temp));
+          lv_label_set_text(id(stove_main_target_temp_label), buf);
+
+  - id: stove_ui_update_current_temp
+    then:
+      - lambda: |-
+          char buf[24];
+
+          if (id(${stove_temp_sensor_id}).has_state()) {
+            float current = id(${stove_temp_sensor_id}).state;
+            snprintf(buf, sizeof(buf), "%.1f°", current);
+            lv_label_set_text(id(stove_main_current_temp_label), buf);
+            lv_label_set_text(id(stove_temp_page_current_label), buf);
+
+            int minv = ${stove_min_temp};
+            int maxv = id(stove_target_temp);
+            if (maxv < minv + 1) maxv = minv + 1;
+            lv_arc_set_range(id(stove_arc_main_current), minv, maxv);
+
+            int arc_current = (int)(current + 0.5f);
+            if (arc_current < minv) arc_current = minv;
+            if (arc_current > maxv) arc_current = maxv;
+            lv_arc_set_value(id(stove_arc_main_current), arc_current);
+
+            int page_arc_current = (int)(current + 0.5f);
+            if (page_arc_current < ${stove_min_temp}) page_arc_current = ${stove_min_temp};
+            if (page_arc_current > ${stove_max_temp}) page_arc_current = ${stove_max_temp};
+            lv_arc_set_value(id(stove_arc_current_temperature), page_arc_current);
+          } else {
+            lv_label_set_text(id(stove_main_current_temp_label), "--.-°");
+            lv_label_set_text(id(stove_temp_page_current_label), "--.-°");
+            lv_arc_set_value(id(stove_arc_main_current), ${stove_min_temp});
+            lv_arc_set_value(id(stove_arc_current_temperature), ${stove_min_temp});
+          }
+
+  - id: stove_ui_update_timer
+    then:
+      - lambda: |-
+          int set_total = (id(stove_timer_hours) * 3600) + (id(stove_timer_minutes) * 60);
+          int elapsed = 0;
+          int remaining = 0;
+
+          if (id(stove_cycle_running) && id(stove_hold_started)) {
+            remaining = id(stove_remaining_sec);
+            elapsed = set_total - remaining;
+            if (elapsed < 0) elapsed = 0;
+          } else if (id(stove_cycle_finished)) {
+            remaining = 0;
+            elapsed = set_total;
+          } else {
+            remaining = set_total;
+            elapsed = 0;
+          }
+
+          int scaled = 0;
+          if (set_total > 0) {
+            scaled = (elapsed * 1000) / set_total;
+            if (scaled < 0) scaled = 0;
+            if (scaled > 1000) scaled = 1000;
+          }
+          lv_arc_set_value(id(stove_arc_main_timer), scaled);
+
+          char buf_remaining[24];
+          int hh = remaining / 3600;
+          int mm = (remaining % 3600) / 60;
+          int ss = remaining % 60;
+          snprintf(buf_remaining, sizeof(buf_remaining), "%02d:%02d:%02d", hh, mm, ss);
+          lv_label_set_text(id(stove_main_remaining_label), buf_remaining);
+
+  - id: stove_ui_update_status
+    then:
+      - lambda: |-
+          const char* new_status = nullptr;
+          lv_color_t status_color;
+
+          if (id(stove_timer_invalid)) {
+            new_status = "ЗАДАЙТЕ ТАЙМЕР";
+            status_color = lv_color_hex(0xFF3B30);
+          } else if (id(stove_cycle_finished)) {
+            new_status = "ЦИКЛ ОКОНЧЕН";
+            status_color = lv_color_hex(0x34C759);
+          } else if (id(stove_cycle_running) && id(stove_hold_started)) {
+            new_status = "ВЫДЕРЖКА";
+            status_color = lv_color_hex(0xFFD60A);
+          } else if (id(stove_cycle_running) && id(stove_target_reached_latch_sec) > 0) {
+            static char buf[32];
+            snprintf(buf, sizeof(buf), "СТАБИЛИЗАЦИЯ %d/%d",
+                     id(stove_target_reached_latch_sec),
+                     ${stove_reach_stable_seconds});
+            new_status = buf;
+            status_color = lv_color_hex(0xFFD60A);
+          } else if (id(stove_cycle_running)) {
+            new_status = "НАГРЕВ";
+            status_color = lv_color_hex(0xFF6600);
+          } else {
+            new_status = "ОЖИДАНИЕ";
+            status_color = lv_color_hex(0xC7D0E0);
+          }
+
+          lv_label_set_text(id(stove_top_status_label), new_status);
+          lv_obj_set_style_text_color(id(stove_top_status_label), status_color, 0);
+
+  - id: stove_ui_update_start_stop
+    then:
+      - lambda: |-
+          const char* btn_text = (id(stove_cycle_running) || id(stove_cycle_finished)) ? "СТОП" : "СТАРТ";
+          lv_label_set_text(id(stove_main_start_stop_label), btn_text);
+          lv_obj_set_style_text_color(id(stove_main_start_stop_label), lv_color_hex(id(stove_theme_color_hex)), 0);
+
+  - id: stove_ui_update_heat_indicator
+    then:
+      - if:
+          condition:
+            lambda: 'return id(stove_heating_output_state);'
+          then:
+            - lvgl.widget.show: stove_heat_indicator
+          else:
+            - lvgl.widget.hide: stove_heat_indicator
+
+  - id: stove_ui_update_wifi_icon
+    then:
+      - lambda: |-
+          if (id(stove_wifi_connected)) {
+            lv_obj_set_style_text_color(id(stove_wifi_icon_ui), lv_color_hex(id(stove_theme_color_hex)), 0);
+          } else {
+            lv_obj_set_style_text_color(id(stove_wifi_icon_ui), lv_color_hex(0x808080), 0);
+          }
+
+  - id: stove_ui_show_cycle_finished_modal
+    then:
+      - lambda: |-
+          id(stove_cycle_modal_open) = true;
+          ESP_LOGI("stove_ui", "Show cycle finished modal");
+      - lvgl.widget.show: stove_cycle_modal_overlay
+      - lvgl.widget.show: stove_cycle_modal
+      - lambda: |-
+          lv_obj_move_foreground(id(stove_cycle_modal_overlay));
+          lv_obj_move_foreground(id(stove_cycle_modal));
+      - script.execute: stove_ui_update_alarm_blink
+
+  - id: stove_ui_hide_cycle_finished_modal
+    then:
+      - lambda: |-
+          id(stove_cycle_modal_open) = false;
+          id(stove_alarm_blink_state) = false;
+          ESP_LOGI("stove_ui", "Hide cycle finished modal");
+      - lvgl.widget.hide: stove_cycle_modal
+      - lvgl.widget.hide: stove_cycle_modal_overlay
+      - script.execute: stove_ui_update_alarm_blink
+
+  - id: stove_ui_update_alarm_blink
+    then:
+      - lambda: |-
+          if (id(stove_cycle_finished) && id(stove_cycle_modal_open) && id(stove_alarm_blink_state)) {
+            lv_obj_set_style_text_color(id(stove_modal_alarm_big), lv_color_hex(0xFF3B30), 0);
+          } else if (id(stove_cycle_finished) && id(stove_cycle_modal_open)) {
+            lv_obj_set_style_text_color(id(stove_modal_alarm_big), lv_color_hex(0x5A1A18), 0);
+          } else {
+            lv_obj_set_style_text_color(id(stove_modal_alarm_big), lv_color_hex(0xFF3B30), 0);
+          }
+
+  - id: stove_ui_refresh_all
+    then:
+      - script.execute: stove_ui_update_hysteresis_label
+      - script.execute: stove_ui_update_target_temp_edit
+      - script.execute: stove_ui_update_target_temp_main
+      - script.execute: stove_ui_update_current_temp
+      - script.execute: stove_ui_update_timer
+      - script.execute: stove_ui_update_status
+      - script.execute: stove_ui_update_start_stop
+      - script.execute: stove_ui_update_heat_indicator
+      - script.execute: stove_ui_update_wifi_icon
+
+  - id: stove_open_settings_panel
+    then:
+      - lambda: |-
+          id(stove_hysteresis_edit) = id(stove_hysteresis);
+          id(stove_theme_index_edit) = id(stove_theme_index);
+          id(stove_settings_open) = true;
+
+          id(stove_update_available_cached) = false;
+          id(stove_update_latest_version).clear();
+          id(stove_update_info_ok) = false;
+          id(stove_update_md5).clear();
+          id(stove_update_ota_url).clear();
+
+          lv_label_set_text(id(stove_current_version_label_ui), "Текущая версия: ${stove_version}");
+          lv_label_set_text(id(stove_update_status_label_ui), "Проверка обновлений...");
+          lv_obj_set_style_text_color(id(stove_update_button_label_ui), lv_color_hex(0x606682), 0);
+
+          ESP_LOGI("stove_ui", "Open settings panel: hyst=%d theme=%d",
+                   id(stove_hysteresis_edit), id(stove_theme_index_edit));
+      - script.execute: stove_ui_update_hysteresis_label
+      - lvgl.widget.show: stove_settings_overlay
+      - lvgl.widget.show: stove_settings_panel
+      - lambda: |-
+          lv_obj_move_foreground(id(stove_settings_overlay));
+          lv_obj_move_foreground(id(stove_settings_panel));
+          lv_obj_set_x(id(stove_settings_panel), 0);
+      - delay: 3s
+      - if:
+          condition:
+            lambda: 'return id(stove_settings_open);'
+          then:
+            - script.execute: stove_fetch_update_info
+
+  - id: stove_close_settings_panel
+    then:
+      - lambda: |-
+          id(stove_settings_open) = false;
+          lv_obj_set_x(id(stove_settings_panel), -lv_obj_get_width(id(stove_settings_panel)));
+          ESP_LOGI("stove_ui", "Close settings panel");
+      - lvgl.widget.hide: stove_settings_panel
+      - lvgl.widget.hide: stove_settings_overlay
+
+  - id: stove_cancel_hysteresis
+    then:
+      - lambda: |-
+          id(stove_hysteresis_edit) = id(stove_hysteresis);
+          id(stove_theme_index_edit) = id(stove_theme_index);
+          ESP_LOGI("stove_ui", "Settings edit cancelled, restored hyst=%d theme=%d",
+                   id(stove_hysteresis), id(stove_theme_index));
+      - script.execute: stove_apply_theme
+      - script.execute: stove_close_settings_panel
+
+  - id: stove_toggle_settings_panel
+    then:
+      - if:
+          condition:
+            lambda: 'return id(stove_settings_open);'
+          then:
+            - script.execute: stove_cancel_hysteresis
+          else:
+            - script.execute: stove_open_settings_panel
+
+  - id: stove_save_hysteresis
+    then:
+      - lambda: |-
+          id(stove_hysteresis) = id(stove_hysteresis_edit);
+          id(stove_theme_index) = id(stove_theme_index_edit);
+          ESP_LOGI("stove_ui", "Settings saved: hyst=%d theme=%d",
+                   id(stove_hysteresis), id(stove_theme_index));
+      - script.execute: stove_apply_theme
+      - script.execute: stove_close_settings_panel
+
+  - id: stove_open_temp_page
+    then:
+      - lambda: |-
+          id(stove_target_temp_edit) = id(stove_target_temp);
+          lv_arc_set_value(id(stove_arc_target_edit), id(stove_target_temp_edit));
+      - lvgl.page.show: stove_temp_page
+      - script.execute: stove_ui_update_target_temp_edit
+      - script.execute: stove_ui_update_current_temp
+
+  - id: stove_cancel_temp_edit
+    then:
+      - lambda: |-
+          id(stove_target_temp_edit) = id(stove_target_temp);
+          lv_arc_set_value(id(stove_arc_target_edit), id(stove_target_temp_edit));
+      - lvgl.page.show: stove_main_page
+      - script.execute: stove_ui_update_target_temp_edit
+      - script.execute: stove_ui_update_target_temp_main
+
+  - id: stove_save_temp_edit
+    then:
+      - lambda: |-
+          id(stove_target_temp) = id(stove_target_temp_edit);
+          ESP_LOGI("stove_ui", "Target temperature saved: %d", id(stove_target_temp));
+      - script.execute: stove_sync_climate
+      - lvgl.page.show: stove_main_page
+      - script.execute: stove_ui_update_target_temp_main
+      - script.execute: stove_ui_update_current_temp
+
+  - id: stove_open_timer_page
+    then:
+      - lvgl.roller.update:
+          id: stove_timer_hours_roller_page
+          selected_index: !lambda 'return id(stove_timer_hours);'
+          animated: false
+      - lvgl.roller.update:
+          id: stove_timer_minutes_roller_page
+          selected_index: !lambda 'return id(stove_timer_minutes);'
+          animated: false
+      - lvgl.page.show: stove_timer_page
+      - script.execute: stove_ui_update_timer
+
+  - id: stove_back_to_main_page
+    then:
+      - lvgl.page.show: stove_main_page
+      - script.execute: stove_ui_refresh_all
+
+  - id: stove_open_wifi_modal
+    then:
+      - script.execute: stove_refresh_wifi_info
+      - script.execute: stove_update_wifi_modal
+      - lvgl.widget.show: stove_wifi_modal_overlay
+      - lvgl.widget.show: stove_wifi_modal
+      - lambda: |-
+          lv_obj_move_foreground(id(stove_wifi_modal_overlay));
+          lv_obj_move_foreground(id(stove_wifi_modal));
+
+  - id: stove_close_wifi_modal
+    then:
+      - lvgl.widget.hide: stove_wifi_modal
+      - lvgl.widget.hide: stove_wifi_modal_overlay
+
+  - id: stove_update_wifi_modal
+    then:
+      - lambda: |-
+          if (id(stove_wifi_connected)) {
+            lv_label_set_text(id(stove_wifi_modal_status), "Статус: Подключено");
+
+            std::string ip = id(stove_wifi_ip_text).state;
+            std::string ip_text = "IP: " + ip;
+            lv_label_set_text(id(stove_wifi_modal_ip), ip_text.c_str());
+
+            char rssi_buf[32];
+            if (id(stove_wifi_signal).has_state()) {
+              snprintf(rssi_buf, sizeof(rssi_buf), "Сигнал: %.0f dBm", id(stove_wifi_signal).state);
+            } else {
+              snprintf(rssi_buf, sizeof(rssi_buf), "Сигнал: -- dBm");
+            }
+            lv_label_set_text(id(stove_wifi_modal_rssi), rssi_buf);
+          } else {
+            lv_label_set_text(id(stove_wifi_modal_status), "Статус: Нет подключения");
+            lv_label_set_text(id(stove_wifi_modal_ip), "IP: Недоступен");
+            lv_label_set_text(id(stove_wifi_modal_rssi), "Сигнал: -- dBm");
+          }
+
+  - id: stove_close_cycle_modal
+    then:
+      - script.execute: stove_ui_hide_cycle_finished_modal
+
+  - id: stove_reset_all
+    then:
+      - lambda: |-
+          id(stove_cycle_running) = false;
+          id(stove_hold_started) = false;
+          id(stove_cycle_finished) = false;
+          id(stove_heating_output_state) = false;
+          id(stove_alarm_output_state) = false;
+          id(stove_remaining_sec) = 0;
+          id(stove_target_temp_edit) = id(stove_target_temp);
+          id(stove_timer_invalid) = false;
+          id(stove_target_reached_latch_sec) = 0;
+          id(stove_ui_user_adjusting_target) = false;
+          id(stove_hysteresis_edit) = id(stove_hysteresis);
+          id(stove_theme_index_edit) = id(stove_theme_index);
+          id(stove_settings_open) = false;
+          id(stove_cycle_modal_open) = false;
+          id(stove_alarm_blink_state) = false;
+          ESP_LOGI("stove_cycle", "Reset all: target=%d hyst=%d timer=%02d:%02d",
+                   id(stove_target_temp), id(stove_hysteresis),
+                   id(stove_timer_hours), id(stove_timer_minutes));
+      - switch.turn_off: stove_heat_relay
+      - switch.turn_off: stove_alarm_relay
+      - climate.control:
+          id: stove_thermostat
+          mode: "OFF"
+          target_temperature: !lambda |-
+            return id(stove_target_temp);
+      - lvgl.page.show: stove_main_page
+      - lvgl.widget.hide: stove_cycle_modal
+      - lvgl.widget.hide: stove_cycle_modal_overlay
+      - lvgl.widget.hide: stove_wifi_modal
+      - lvgl.widget.hide: stove_wifi_modal_overlay
+      - lvgl.widget.hide: stove_settings_panel
+      - lvgl.widget.hide: stove_settings_overlay
+      - lambda: |-
+          lv_obj_set_x(id(stove_settings_panel), -lv_obj_get_width(id(stove_settings_panel)));
+          lv_arc_set_value(id(stove_arc_target_edit), id(stove_target_temp_edit));
+          lv_arc_set_value(id(stove_arc_main_timer), 0);
+      - lvgl.roller.update:
+          id: stove_timer_hours_roller_page
+          selected_index: !lambda 'return id(stove_timer_hours);'
+          animated: false
+      - lvgl.roller.update:
+          id: stove_timer_minutes_roller_page
+          selected_index: !lambda 'return id(stove_timer_minutes);'
+          animated: false
+      - script.execute: stove_refresh_wifi_info
+      - script.execute: stove_apply_theme
+      - script.execute: stove_ui_refresh_all

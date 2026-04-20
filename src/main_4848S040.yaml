@@ -1,6 +1,6 @@
 substitutions:
-  display_name: "stove"
-  stove_version: "2026.4.3"
+  display_name: "stove4848S040"
+  stove_version: "2026.4.0"
   stove_name: "Печь"
   stove_temp_sensor_id: max6675_temp
 
@@ -15,7 +15,7 @@ substitutions:
 
   stove_reach_stable_seconds: "5"
 
-  update_info_url: "https://alaltitov.github.io/stove/manifest.json"
+  update_info_url: "https://alaltitov.github.io/stove/manifest_4848S040.json"
 
   plus_icon: "\U000F0415"
   minus_icon: "\U000F0374"
