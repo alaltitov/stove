@@ -24,10 +24,10 @@ jobs:
         run: pip install esphome
 
       - name: Compile ESPHome Firmware for 3248W535
-        run: esphome compile src/main_3248W535.yaml
+        run: esphome compile src/main_3248w535.yaml
 
       - name: Compile ESPHome Firmware for 4848S040
-        run: esphome compile src/main_4848S040.yaml
+        run: esphome compile src/main_4848s040.yaml
 
       - name: Prepare Files for Pages and Release
         run: |
