@@ -21,7 +21,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install ESPHome
-        run: pip install esphome
+        run: pip install esphome==2026.3.1
 
       - name: Compile ESPHome Firmware for 3248W535
         run: esphome compile src/main_3248w535.yaml
