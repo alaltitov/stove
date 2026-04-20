@@ -1,0 +1,12 @@
+{
+  "name": "alaltitov.stove.4848s040",
+  "version": "v2026.4.4",
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "https://alaltitov.github.io/stove/stove-4848s040-v2026.4.4-factory.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

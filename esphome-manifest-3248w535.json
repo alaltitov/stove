@@ -1,0 +1,12 @@
+{
+  "name": "alaltitov.stove.3248w535",
+  "version": "v2026.4.4",
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "https://alaltitov.github.io/stove/stove-3248w535-v2026.4.4-factory.bin", "offset": 0 }
+      ]
+    }
+  ]
+}
