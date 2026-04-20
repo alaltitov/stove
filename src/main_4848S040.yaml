@@ -1,5 +1,5 @@
 substitutions:
-  display_name: "stove4848S040"
+  display_name: "stove4848s040"
   stove_version: "2026.4.4"
   stove_name: "Печь"
   stove_temp_sensor_id: max6675_temp

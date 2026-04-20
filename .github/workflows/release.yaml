@@ -39,8 +39,8 @@ jobs:
           DEVICE1="3248W535"
           DEVICE2="4848S040"
 
-          NAME1="stove3248W535"
-          NAME2="stove4848S040"
+          NAME1="stove3248w535"
+          NAME2="stove4848s040"
 
           OTA1_BIN="stove-${DEVICE1}-${VERSION}-ota.bin"
           FACTORY1_BIN="stove-${DEVICE1}-${VERSION}-factory.bin"
