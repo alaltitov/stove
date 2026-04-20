@@ -15,7 +15,7 @@ substitutions:
 
   stove_reach_stable_seconds: "5"
 
-  update_info_url: "https://alaltitov.github.io/stove/manifest_3248W535.json"
+  update_info_url: "https://alaltitov.github.io/stove/manifest_3248w535.json"
 
   plus_icon: "\U000F0415"
   minus_icon: "\U000F0374"
